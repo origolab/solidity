@@ -3,13 +3,12 @@
 contract B {
 	A a;
 	function B() public {
-		a = new A(this);
+		a = new A(address(this));
 	}
 }
 contract A {
-	function A(address a) internal {}
+	function A(address) public {}
 }
 // ----
-// Warning: (112-155): Defining constructors as functions with the same name as the contract is deprecated. Use "constructor(...) { ... }" instead.
-// Warning: (172-205): Defining constructors as functions with the same name as the contract is deprecated. Use "constructor(...) { ... }" instead.
-// TypeError: (140-145): Contract with internal constructor cannot be created directly.
+// Warning: (112-164): Defining constructors as functions with the same name as the contract is deprecated. Use "constructor(...) { ... }" instead.
+// Warning: (181-210): Defining constructors as functions with the same name as the contract is deprecated. Use "constructor(...) { ... }" instead.
