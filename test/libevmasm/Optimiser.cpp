@@ -932,6 +932,65 @@ BOOST_AUTO_TEST_CASE(peephole_noncommutative_swap1)
 	}
 }
 
+BOOST_AUTO_TEST_CASE(peephole_swap_add)
+{
+	// ADD is a commutative operation, hence, it is safe to eliminate the SWAP1
+
+	AssemblyItems code{
+		u256(1),
+		u256(2),
+		Instruction::SWAP1,
+		Instruction::ADD,
+		u256(3),
+		u256(4)
+	};
+
+	AssemblyItems const expectation{
+		u256(1),
+		u256(2),
+		Instruction::ADD,
+		u256(3),
+		u256(4)
+	};
+
+	PeepholeOptimiser peepOpt(code);
+	BOOST_REQUIRE(peepOpt.optimise());
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		code.begin(), code.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(peephole_swap_div)
+{
+	// DIV is a non-commutative function, hence, we must not eliminate the swap
+
+	AssemblyItems code{
+		u256(10),
+		u256(5),
+		Instruction::SWAP1,
+		Instruction::DIV,
+		u256(3),
+		u256(4)
+	};
+
+	AssemblyItems expected{
+		u256(10),
+		u256(5),
+		Instruction::SWAP1,
+		Instruction::DIV,
+		u256(3),
+		u256(4)
+	};
+
+	PeepholeOptimiser peepOpt(code);
+	BOOST_REQUIRE(!peepOpt.optimise());
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		code.begin(), code.end(),
+		expected.begin(), expected.end()
+	);
+}
+
 BOOST_AUTO_TEST_CASE(peephole_swap_comparison)
 {
 	map<Instruction, Instruction> swappableOps{

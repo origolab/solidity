@@ -469,12 +469,25 @@ library strings {
                     let needledata := and(mload(needleptr), mask)
                     let end := add(selfptr, sub(selflen, needlelen))
                     ptr := selfptr
-                    loop:
-                    jumpi(exit, eq(and(mload(ptr), mask), needledata))
-                    ptr := add(ptr, 1)
-                    jumpi(loop, lt(sub(ptr, 1), end))
-                    ptr := add(selfptr, selflen)
-                    exit:
+
+                    if iszero(eq(and(mload(ptr), mask), needledata)) {
+                        ptr := add(ptr, 1)
+                        for {} or(iszero(eq(and(mload(ptr), mask), needledata)), lt(sub(ptr, 1), end)) {} {
+                            ptr := add(ptr, 1)
+                        }
+                        if lt(sub(ptr, 1), end) {
+                            ptr := add(selfptr, selflen)
+                        }
+                    }
+
+                    // Instruction Style:
+                    //
+                    // loop:
+                    // jumpi(exit, eq(and(mload(ptr), mask), needledata))
+                    // ptr := add(ptr, 1)
+                    // jumpi(loop, lt(sub(ptr, 1), end))
+                    // ptr := add(selfptr, selflen)
+                    // exit:
                 }
                 return ptr;
             } else {
@@ -506,15 +519,34 @@ library strings {
                     let mask := not(sub(exp(2, mul(8, sub(32, needlelen))), 1))
                     let needledata := and(mload(needleptr), mask)
                     ptr := add(selfptr, sub(selflen, needlelen))
-                    loop:
-                    jumpi(ret, eq(and(mload(ptr), mask), needledata))
-                    ptr := sub(ptr, 1)
-                    jumpi(loop, gt(add(ptr, 1), selfptr))
-                    ptr := selfptr
-                    jump(exit)
-                    ret:
-                    ptr := add(ptr, needlelen)
-                    exit:
+
+                    if iszero(eq(and(mload(ptr), mask), needledata)) {
+                        ptr := sub(ptr, 1)
+                        for {} iszero(eq(and(mload(ptr), mask), needledata)) {} {
+                            ptr := sub(ptr, 1)
+                        }
+                        if eq(and(mload(ptr), mask), needledata) {
+                            ptr := add(ptr, needlelen)
+                        }
+                    }
+                    if eq(and(mload(ptr), mask), needledata) {
+                        ptr := add(ptr, needlelen)
+                    }
+
+                    // Instruction Style:
+                    //
+                    // loop:
+                    // jumpi(ret, eq(and(mload(ptr), mask), needledata))
+                    //
+                    // ptr := sub(ptr, 1)
+                    // jumpi(loop, gt(add(ptr, 1), selfptr))
+                    //
+                    // ptr := selfptr
+                    // jump(exit)
+                    //
+                    // ret:
+                    // ptr := add(ptr, needlelen)
+                    // exit:
                 }
                 return ptr;
             } else {

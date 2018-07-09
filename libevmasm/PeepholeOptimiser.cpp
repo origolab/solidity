@@ -35,8 +35,11 @@ namespace
 
 struct OptimiserState
 {
+	/// array of instructions to be worked on
 	AssemblyItems const& items;
+	/// Offset to the first instruction in `items` that has to be inspected & optimised
 	size_t i;
+	/// new-instruction insertion iterator
 	std::back_insert_iterator<AssemblyItems> out;
 };
 
@@ -323,6 +326,7 @@ bool PeepholeOptimiser::optimise()
 	OptimiserState state {m_items, 0, std::back_inserter(m_optimisedItems)};
 	while (state.i < m_items.size())
 		applyMethods(state, PushPop(), OpPop(), DoublePush(), DoubleSwap(), CommutativeSwap(), SwapComparison(), JumpToNext(), UnreachableCode(), TagConjunctions(), TruthyAnd(), Identity());
+
 	if (m_optimisedItems.size() < m_items.size() || (
 		m_optimisedItems.size() == m_items.size() && (
 			eth::bytesRequired(m_optimisedItems, 3) < eth::bytesRequired(m_items, 3) ||
