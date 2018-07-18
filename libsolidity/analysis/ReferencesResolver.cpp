@@ -408,7 +408,7 @@ void ReferencesResolver::endVisit(VariableDeclaration const& _variable)
 		}
 		else if (dynamic_cast<MappingType const*>(type.get()))
 		{
-			if (_variable.isLocalVariable() && (varLoc == Location::Memory || varLoc == Location::Default))
+			if (_variable.isLocalVariable() && (varLoc == Location::Default || varLoc == Location::Memory))
 				typeError(
 					_variable.location(),
 					"Data location must be specified as \"storage\"."
