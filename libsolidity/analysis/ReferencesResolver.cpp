@@ -305,9 +305,7 @@ void ReferencesResolver::endVisit(VariableDeclaration const& _variable)
 		// and memory for parameters (also return) of publicly visible functions.
 		// They default to memory for function parameters and storage for local variables.
 		// As an exception, "storage" is allowed for library functions.
-		auto ref = dynamic_cast<ReferenceType const*>(type.get());
-		auto mapping = dynamic_cast<MappingType const*>(type.get());
-		if (ref || mapping)
+		if (auto ref = dynamic_cast<ReferenceType const*>(type.get()))
 		{
 			bool isPointer = true;
 			if (_variable.isExternalCallableParameter())
@@ -406,9 +404,15 @@ void ReferencesResolver::endVisit(VariableDeclaration const& _variable)
 				}
 				isPointer = !_variable.isStateVariable();
 			}
-
-			if (ref)
-				type = ref->copyForLocation(typeLoc, isPointer);
+			type = ref->copyForLocation(typeLoc, isPointer);
+		}
+		else if (dynamic_cast<MappingType const*>(type.get()))
+		{
+			if (_variable.isLocalVariable() && (varLoc == Location::Memory || varLoc == Location::Default))
+				typeError(
+					_variable.location(),
+					"Data location must be specified as \"storage\"."
+				);
 		}
 		else if (varLoc != Location::Default && !ref)
 			typeError(_variable.location(), "Data location can only be given for array or struct types.");

@@ -6,4 +6,4 @@ contract c {
     }
 }
 // ----
-// TypeError: (81-104): Data location must be specified as either "memory" or "storage".
+// TypeError: (81-104): Data location must be specified as "storage".
