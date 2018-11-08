@@ -110,7 +110,7 @@ BOOST_AUTO_TEST_CASE(simple_assert)
 			function f(uint a) public pure { assert(a == 2); }
 		}
 	)";
-	CHECK_WARNING(text, "Assertion violation happens here for");
+	CHECK_WARNING(text, "Assertion violation happens here");
 }
 
 BOOST_AUTO_TEST_CASE(simple_assert_with_require)
@@ -128,22 +128,6 @@ BOOST_AUTO_TEST_CASE(assignment_in_declaration)
 	string text = R"(
 		contract C {
 			function f() public pure { uint a = 2; assert(a == 2); }
-		}
-	)";
-	CHECK_SUCCESS_NO_WARNINGS(text);
-}
-
-BOOST_AUTO_TEST_CASE(function_call_does_not_clear_local_vars)
-{
-	string text = R"(
-		contract C {
-			function f() public {
-				uint a = 3;
-				this.f();
-				assert(a == 3);
-				f();
-				assert(a == 3);
-			}
 		}
 	)";
 	CHECK_SUCCESS_NO_WARNINGS(text);
@@ -343,7 +327,7 @@ BOOST_AUTO_TEST_CASE(bool_simple)
 	text = R"(
 		contract C {
 			function f(bool x) public pure {
-				if(x) {
+				if (x) {
 					assert(x);
 				} else {
 					assert(!x);
@@ -380,7 +364,7 @@ BOOST_AUTO_TEST_CASE(bool_int_mixed)
 		contract C {
 			function f(bool x) public pure {
 				uint a;
-				if(x)
+				if (x)
 					a = 1;
 				assert(!x || a > 0);
 			}
@@ -569,7 +553,10 @@ BOOST_AUTO_TEST_CASE(constant_condition)
 			}
 		}
 	)";
-	CHECK_WARNING(text, "Condition is always true");
+	CHECK_WARNING_ALLOW_MULTI(text, (vector<string>{
+		"Condition is always true",
+		"Assertion checker does not yet implement this type of function call"
+	}));
 	text = R"(
 		contract C {
 			function f(uint x) public pure {
@@ -577,7 +564,10 @@ BOOST_AUTO_TEST_CASE(constant_condition)
 			}
 		}
 	)";
-	CHECK_WARNING(text, "Condition is always false");
+	CHECK_WARNING_ALLOW_MULTI(text, (vector<string>{
+		"Condition is always false",
+		"Assertion checker does not yet implement this type of function call"
+	}));
 	// a plain literal constant is fine
 	text = R"(
 		contract C {
@@ -586,7 +576,7 @@ BOOST_AUTO_TEST_CASE(constant_condition)
 			}
 		}
 	)";
-	CHECK_SUCCESS_NO_WARNINGS(text);
+	CHECK_WARNING(text, "Assertion checker does not yet implement this type of function call");
 }
 
 

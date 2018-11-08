@@ -158,7 +158,7 @@ BOOST_AUTO_TEST_CASE(function_external_types)
 			uint a;
 		}
 		contract Test {
-			function boo(uint, bool, bytes8, bool[2], uint[], C, address[]) external returns (uint ret) {
+			function boo(uint, bool, bytes8, bool[2] calldata, uint[] calldata, C, address[] calldata) external returns (uint ret) {
 				ret = 5;
 			}
 		}
@@ -206,10 +206,10 @@ BOOST_AUTO_TEST_CASE(external_structs)
 			struct Simple { uint i; }
 			struct Nested { X[2][] a; uint y; }
 			struct X { bytes32 x; Test t; Simple[] s; }
-			function f(ActionChoices, uint, Simple) external {}
-			function g(Test, Nested) external {}
-			function h(function(Nested memory) external returns (uint)[]) external {}
-			function i(Nested[]) external {}
+			function f(ActionChoices, uint, Simple calldata) external {}
+			function g(Test, Nested calldata) external {}
+			function h(function(Nested memory) external returns (uint)[] calldata) external {}
+			function i(Nested[] calldata) external {}
 		}
 	)";
 	SourceUnit const* sourceUnit = parseAndAnalyse(text);
@@ -234,10 +234,10 @@ BOOST_AUTO_TEST_CASE(external_structs_in_libraries)
 			struct Simple { uint i; }
 			struct Nested { X[2][] a; uint y; }
 			struct X { bytes32 x; Test t; Simple[] s; }
-			function f(ActionChoices, uint, Simple) external {}
-			function g(Test, Nested) external {}
-			function h(function(Nested memory) external returns (uint)[]) external {}
-			function i(Nested[]) external {}
+			function f(ActionChoices, uint, Simple calldata) external {}
+			function g(Test, Nested calldata) external {}
+			function h(function(Nested memory) external returns (uint)[] calldata) external {}
+			function i(Nested[] calldata) external {}
 		}
 	)";
 	SourceUnit const* sourceUnit = parseAndAnalyse(text);
@@ -340,7 +340,7 @@ BOOST_AUTO_TEST_CASE(string)
 	char const* sourceCode = R"(
 		contract C {
 			string s;
-			function f(string x) external { s = x; }
+			function f(string calldata x) external { s = x; }
 		}
 	)";
 	BOOST_CHECK_NO_THROW(parseAndAnalyse(sourceCode));
@@ -390,30 +390,41 @@ BOOST_AUTO_TEST_CASE(unsatisfied_version)
 BOOST_AUTO_TEST_CASE(returndatasize_as_variable)
 {
 	char const* text = R"(
-		contract c { function f() public { uint returndatasize; assembly { returndatasize }}}
+		contract C { function f() public pure { uint returndatasize; returndatasize; assembly { pop(returndatasize()) }}}
 	)";
 	vector<pair<Error::Type, std::string>> expectations(vector<pair<Error::Type, std::string>>{
-		{Error::Type::Warning, "Variable is shadowed in inline assembly by an instruction of the same name"},
-		{Error::Type::Warning, "The use of non-functional instructions is deprecated."},
-		{Error::Type::DeclarationError, "Unbalanced stack"}
+		{Error::Type::Warning, "Variable is shadowed in inline assembly by an instruction of the same name"}
 	});
 	if (!dev::test::Options::get().evmVersion().supportsReturndata())
-		expectations.emplace_back(make_pair(Error::Type::Warning, std::string("\"returndatasize\" instruction is only available for Byzantium-compatible")));
+		expectations.emplace_back(make_pair(Error::Type::Warning, std::string("\"returndatasize\" instruction is only available for Byzantium-compatible VMs.")));
 	CHECK_ALLOW_MULTI(text, expectations);
 }
 
 BOOST_AUTO_TEST_CASE(create2_as_variable)
 {
 	char const* text = R"(
-		contract c { function f() public { uint create2; assembly { create2(0, 0, 0, 0) } }}
+		contract c { function f() public { uint create2; create2; assembly { pop(create2(0, 0, 0, 0)) } }}
+	)";
+	// This needs special treatment, because the message mentions the EVM version,
+	// so cannot be run via isoltest.
+	vector<pair<Error::Type, std::string>> expectations(vector<pair<Error::Type, std::string>>{
+		{Error::Type::Warning, "Variable is shadowed in inline assembly by an instruction of the same name"}
+	});
+	if (!dev::test::Options::get().evmVersion().hasCreate2())
+		expectations.emplace_back(make_pair(Error::Type::Warning, std::string("\"create2\" instruction is only available for Constantinople-compatible VMs.")));
+	CHECK_ALLOW_MULTI(text, expectations);
+}
+
+BOOST_AUTO_TEST_CASE(extcodehash_as_variable)
+{
+	char const* text = R"(
+		contract c { function f() public view { uint extcodehash; extcodehash; assembly { pop(extcodehash(0)) } }}
 	)";
 	// This needs special treatment, because the message mentions the EVM version,
 	// so cannot be run via isoltest.
 	CHECK_ALLOW_MULTI(text, (std::vector<std::pair<Error::Type, std::string>>{
 		{Error::Type::Warning, "Variable is shadowed in inline assembly by an instruction of the same name"},
-		{Error::Type::Warning, "The \"create2\" instruction is not supported by the VM version"},
-		{Error::Type::DeclarationError, "Unbalanced stack"},
-		{Error::Type::Warning, "not supposed to return values"}
+		{Error::Type::Warning, "The \"extcodehash\" instruction is not supported by the VM version"},
 	}));
 }
 
@@ -434,6 +445,90 @@ BOOST_AUTO_TEST_CASE(getter_is_memory_type)
 	{
 		auto const& retType = f.second->returnParameterTypes().at(0);
 		BOOST_CHECK(retType->dataStoredIn(DataLocation::Memory));
+	}
+}
+
+BOOST_AUTO_TEST_CASE(address_staticcall)
+{
+	char const* sourceCode = R"(
+		contract C {
+			function f() public view returns(bool) {
+				(bool success,) = address(0x4242).staticcall("");
+				return success;
+			}
+		}
+	)";
+
+	if (dev::test::Options::get().evmVersion().hasStaticCall())
+		CHECK_SUCCESS_NO_WARNINGS(sourceCode);
+	else
+		CHECK_ERROR(sourceCode, TypeError, "\"staticcall\" is not supported by the VM version.");
+}
+
+BOOST_AUTO_TEST_CASE(address_staticcall_value)
+{
+	if (dev::test::Options::get().evmVersion().hasStaticCall())
+	{
+		char const* sourceCode = R"(
+			contract C {
+				function f() public view {
+					address(0x4242).staticcall.value;
+				}
+			}
+		)";
+		CHECK_ERROR(sourceCode, TypeError, "Member \"value\" not found or not visible after argument-dependent lookup");
+	}
+}
+
+BOOST_AUTO_TEST_CASE(address_call_full_return_type)
+{
+	char const* sourceCode = R"(
+		contract C {
+			function f() public {
+				(bool success, bytes memory m) = address(0x4242).call("");
+				success; m;
+			}
+		}
+	)";
+
+	if (dev::test::Options::get().evmVersion().supportsReturndata())
+		CHECK_SUCCESS_NO_WARNINGS(sourceCode);
+	else
+		CHECK_ERROR(sourceCode, TypeError, "Type inaccessible dynamic type is not implicitly convertible to expected type bytes memory.");
+}
+
+BOOST_AUTO_TEST_CASE(address_delegatecall_full_return_type)
+{
+	char const* sourceCode = R"(
+		contract C {
+			function f() public {
+				(bool success, bytes memory m) = address(0x4242).delegatecall("");
+				success; m;
+			}
+		}
+	)";
+
+	if (dev::test::Options::get().evmVersion().supportsReturndata())
+		CHECK_SUCCESS_NO_WARNINGS(sourceCode);
+	else
+		CHECK_ERROR(sourceCode, TypeError, "Type inaccessible dynamic type is not implicitly convertible to expected type bytes memory.");
+}
+
+
+BOOST_AUTO_TEST_CASE(address_staticcall_full_return_type)
+{
+	if (dev::test::Options::get().evmVersion().hasStaticCall())
+	{
+		char const* sourceCode = R"(
+			contract C {
+				function f() public view {
+					(bool success, bytes memory m) = address(0x4242).staticcall("");
+					success; m;
+				}
+			}
+		)";
+
+		CHECK_SUCCESS_NO_WARNINGS(sourceCode);
 	}
 }
 

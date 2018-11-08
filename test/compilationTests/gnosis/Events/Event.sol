@@ -1,4 +1,4 @@
-pragma solidity ^0.4.11;
+pragma solidity >=0.0;
 import "../Tokens/Token.sol";
 import "../Tokens/OutcomeToken.sol";
 import "../Oracles/Oracle.sol";
@@ -54,7 +54,7 @@ contract Event {
         public
     {
         // Transfer collateral tokens to events contract
-        require(collateralToken.transferFrom(msg.sender, this, collateralTokenCount));
+        require(collateralToken.transferFrom(msg.sender, address(this), collateralTokenCount));
         // Issue new outcome tokens to sender
         for (uint8 i = 0; i < outcomeTokens.length; i++)
             outcomeTokens[i].issue(msg.sender, collateralTokenCount);

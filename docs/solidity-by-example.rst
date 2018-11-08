@@ -36,7 +36,7 @@ of votes.
 
 ::
 
-    pragma solidity ^0.4.22;
+    pragma solidity >=0.4.22 <0.6.0;
 
     /// @title Voting with delegation.
     contract Ballot {
@@ -90,7 +90,7 @@ of votes.
             // If the first argument of `require` evaluates
             // to `false`, execution terminates and all
             // changes to the state and to Ether balances
-            // are reverted. 
+            // are reverted.
             // This used to consume all gas in old EVM versions, but
             // not anymore.
             // It is often a good idea to use `require` to check if
@@ -152,6 +152,7 @@ of votes.
         /// to proposal `proposals[proposal].name`.
         function vote(uint proposal) public {
             Voter storage sender = voters[msg.sender];
+            require(sender.weight != 0, "Has no right to vote");
             require(!sender.voted, "Already voted.");
             sender.voted = true;
             sender.vote = proposal;
@@ -220,19 +221,19 @@ bid. If the highest bid is raised, the previously
 highest bidder gets her money back.
 After the end of the bidding period, the
 contract has to be called manually for the
-beneficiary to receive his money - contracts cannot
+beneficiary to receive their money - contracts cannot
 activate themselves.
 
 ::
 
-    pragma solidity ^0.4.22;
+    pragma solidity >=0.4.22 <0.6.0;
 
     contract SimpleAuction {
         // Parameters of the auction. Times are either
         // absolute unix timestamps (seconds since 1970-01-01)
         // or time periods in seconds.
-        address public beneficiary;
-        uint public auctionEnd;
+        address payable public beneficiary;
+        uint public auctionEndTime;
 
         // Current state of the auction.
         address public highestBidder;
@@ -241,10 +242,11 @@ activate themselves.
         // Allowed withdrawals of previous bids
         mapping(address => uint) pendingReturns;
 
-        // Set to true at the end, disallows any change
+        // Set to true at the end, disallows any change.
+        // By default initialized to `false`.
         bool ended;
 
-        // Events that will be fired on changes.
+        // Events that will be emitted on changes.
         event HighestBidIncreased(address bidder, uint amount);
         event AuctionEnded(address winner, uint amount);
 
@@ -258,10 +260,10 @@ activate themselves.
         /// beneficiary address `_beneficiary`.
         constructor(
             uint _biddingTime,
-            address _beneficiary
+            address payable _beneficiary
         ) public {
             beneficiary = _beneficiary;
-            auctionEnd = now + _biddingTime;
+            auctionEndTime = now + _biddingTime;
         }
 
         /// Bid on the auction with the value sent
@@ -278,7 +280,7 @@ activate themselves.
             // Revert the call if the bidding
             // period is over.
             require(
-                now <= auctionEnd,
+                now <= auctionEndTime,
                 "Auction already ended."
             );
 
@@ -337,7 +339,7 @@ activate themselves.
             // external contracts.
 
             // 1. Conditions
-            require(now >= auctionEnd, "Auction not yet ended.");
+            require(now >= auctionEndTime, "Auction not yet ended.");
             require(!ended, "auctionEnd has already been called.");
 
             // 2. Effects
@@ -372,7 +374,7 @@ is the same as the one provided during the bidding period.
 Another challenge is how to make the auction
 **binding and blind** at the same time: The only way to
 prevent the bidder from just not sending the money
-after he won the auction is to make her send it
+after they won the auction is to make her send it
 together with the bid. Since value transfers cannot
 be blinded in Ethereum, anyone can see the value.
 
@@ -388,7 +390,7 @@ high or low invalid bids.
 
 ::
 
-    pragma solidity >0.4.23 <0.5.0;
+    pragma solidity >0.4.23 <0.6.0;
 
     contract BlindAuction {
         struct Bid {
@@ -396,7 +398,7 @@ high or low invalid bids.
             uint deposit;
         }
 
-        address public beneficiary;
+        address payable public beneficiary;
         uint public biddingEnd;
         uint public revealEnd;
         bool public ended;
@@ -421,7 +423,7 @@ high or low invalid bids.
         constructor(
             uint _biddingTime,
             uint _revealTime,
-            address _beneficiary
+            address payable _beneficiary
         ) public {
             beneficiary = _beneficiary;
             biddingEnd = now + _biddingTime;
@@ -467,22 +469,22 @@ high or low invalid bids.
 
             uint refund;
             for (uint i = 0; i < length; i++) {
-                Bid storage bid = bids[msg.sender][i];
+                Bid storage bidToCheck = bids[msg.sender][i];
                 (uint value, bool fake, bytes32 secret) =
                         (_values[i], _fake[i], _secret[i]);
-                if (bid.blindedBid != keccak256(abi.encodePacked(value, fake, secret))) {
+                if (bidToCheck.blindedBid != keccak256(abi.encodePacked(value, fake, secret))) {
                     // Bid was not actually revealed.
                     // Do not refund deposit.
                     continue;
                 }
-                refund += bid.deposit;
-                if (!fake && bid.deposit >= value) {
+                refund += bidToCheck.deposit;
+                if (!fake && bidToCheck.deposit >= value) {
                     if (placeBid(msg.sender, value))
                         refund -= value;
                 }
                 // Make it impossible for the sender to re-claim
                 // the same deposit.
-                bid.blindedBid = bytes32(0);
+                bidToCheck.blindedBid = bytes32(0);
             }
             msg.sender.transfer(refund);
         }
@@ -541,12 +543,12 @@ Safe Remote Purchase
 
 ::
 
-    pragma solidity ^0.4.22;
+    pragma solidity >=0.4.22 <0.6.0;
 
     contract Purchase {
         uint public value;
-        address public seller;
-        address public buyer;
+        address payable public seller;
+        address payable public buyer;
         enum State { Created, Locked, Inactive }
         State public state;
 
@@ -708,7 +710,7 @@ For a contract that fulfills payments, the signed message must include:
 A replay attack is when a signed message is reused to claim authorization for
 a second action.
 To avoid replay attacks we will use the same as in Ethereum transactions
-themselves, a so-called nonce, which is the number of transactions sent by an 
+themselves, a so-called nonce, which is the number of transactions sent by an
 account.
 The smart contract will check if a nonce is used multiple times.
 
@@ -731,7 +733,7 @@ Packing arguments
 Now that we have identified what information to include in the
 signed message, we are ready to put the message together, hash it,
 and sign it. For simplicity, we just concatenate the data.
-The 
+The
 `ethereumjs-abi <https://github.com/ethereumjs/ethereumjs-abi>`_ library provides
 a function called ``soliditySHA3`` that mimics the behavior
 of Solidity's ``keccak256`` function applied to arguments encoded
@@ -750,7 +752,7 @@ creates the proper signature for the ``ReceiverPays`` example:
             ["address", "uint256", "uint256", "address"],
             [recipient, amount, nonce, contractAddress]
         ).toString("hex");
-        
+
         web3.personal.sign(hash, web3.eth.defaultAccount, callback);
     }
 
@@ -779,7 +781,7 @@ at the end of this chapter).
 
 Computing the Message Hash
 --------------------------
- 
+
 The smart contract needs to know exactly what parameters were signed,
 and so it must recreate the message from the parameters and use that
 for signature verification. The functions ``prefixed`` and
@@ -792,7 +794,7 @@ The full contract
 
 ::
 
-    pragma solidity ^0.4.24;
+    pragma solidity >=0.4.24 <0.6.0;
 
     contract ReceiverPays {
         address owner = msg.sender;
@@ -801,7 +803,7 @@ The full contract
 
         constructor() public payable {}
 
-        function claimPayment(uint256 amount, uint256 nonce, bytes signature) public {
+        function claimPayment(uint256 amount, uint256 nonce, bytes memory signature) public {
             require(!usedNonces[nonce]);
             usedNonces[nonce] = true;
 
@@ -820,7 +822,7 @@ The full contract
         }
 
         /// signature methods.
-        function splitSignature(bytes sig)
+        function splitSignature(bytes memory sig)
             internal
             pure
             returns (uint8 v, bytes32 r, bytes32 s)
@@ -839,7 +841,7 @@ The full contract
             return (v, r, s);
         }
 
-        function recoverSigner(bytes32 message, bytes sig)
+        function recoverSigner(bytes32 message, bytes memory sig)
             internal
             pure
             returns (address)
@@ -874,8 +876,8 @@ two parties (Alice and Bob). Using it involves three steps:
     1. Alice funds a smart contract with Ether. This "opens" the payment channel.
     2. Alice signs messages that specify how much of that Ether is owed to the recipient. This step is repeated for each payment.
     3. Bob "closes" the payment channel, withdrawing their portion of the Ether and sending the remainder back to the sender.
-    
-Not ethat only steps 1 and 3 require Ethereum transactions, step 2 means that
+
+Note that only steps 1 and 3 require Ethereum transactions, step 2 means that
 the sender transmits a cryptographically signed message to the recipient via off chain ways (e.g. email).
 This means only two transactions are required to support any number of transfers.
 
@@ -906,8 +908,8 @@ Each message includes the following information:
 
     * The smart contract's address, used to prevent cross-contract replay attacks.
     * The total amount of Ether that is owed the recipient so far.
-    
-A payment channel is closed just once, at the of a series of transfers.
+
+A payment channel is closed just once, at the end of a series of transfers.
 Because of this, only one of the messages sent will be redeemed. This is why
 each message specifies a cumulative total amount of Ether owed, rather than the
 amount of the individual micropayment. The recipient will naturally choose to
@@ -926,7 +928,7 @@ Here is the modified javascript code to cryptographically sign a message from th
             [contractAddress, amount]
         );
     }
-    
+
     function signMessage(message, callback) {
         web3.personal.sign(
             "0x" + message.toString("hex"),
@@ -934,10 +936,10 @@ Here is the modified javascript code to cryptographically sign a message from th
             callback
         );
     }
-    
+
     // contractAddress is used to prevent cross-contract replay attacks.
     // amount, in wei, specifies how much Ether should be sent.
-    
+
     function signPayment(contractAddress, amount, callback) {
         var message = constructPaymentMessage(contractAddress, amount);
         signMessage(message, callback);
@@ -987,14 +989,14 @@ The full contract
 
 ::
 
-    pragma solidity ^0.4.24;
+    pragma solidity >=0.4.24 <0.6.0;
 
     contract SimplePaymentChannel {
-        address public sender;      // The account sending payments.
-        address public recipient;   // The account receiving the payments.
+        address payable public sender;      // The account sending payments.
+        address payable public recipient;   // The account receiving the payments.
         uint256 public expiration;  // Timeout in case the recipient never closes.
 
-        constructor (address _recipient, uint256 duration)
+        constructor (address payable _recipient, uint256 duration)
             public
             payable
         {
@@ -1003,7 +1005,7 @@ The full contract
             expiration = now + duration;
         }
 
-        function isValidSignature(uint256 amount, bytes signature)
+        function isValidSignature(uint256 amount, bytes memory signature)
             internal
             view
             returns (bool)
@@ -1017,7 +1019,7 @@ The full contract
         /// the recipient can close the channel at any time by presenting a
         /// signed amount from the sender. the recipient will be sent that amount,
         /// and the remainder will go back to the sender
-        function close(uint256 amount, bytes signature) public {
+        function close(uint256 amount, bytes memory signature) public {
             require(msg.sender == recipient);
             require(isValidSignature(amount, signature));
 
@@ -1043,7 +1045,7 @@ The full contract
         /// All functions below this are just taken from the chapter
         /// 'creating and verifying signatures' chapter.
 
-        function splitSignature(bytes sig)
+        function splitSignature(bytes memory sig)
             internal
             pure
             returns (uint8 v, bytes32 r, bytes32 s)
@@ -1058,11 +1060,11 @@ The full contract
                 // final byte (first byte of the next 32 bytes)
                 v := byte(0, mload(add(sig, 96)))
             }
-            
+
             return (v, r, s);
         }
-        
-        function recoverSigner(bytes32 message, bytes sig)
+
+        function recoverSigner(bytes32 message, bytes memory sig)
             internal
             pure
             returns (address)
@@ -1083,7 +1085,7 @@ Note: The function ``splitSignature`` is very simple and does not use all securi
 A real implementation should use a more rigorously tested library, such as
 openzepplin's `version <https://github.com/OpenZeppelin/openzeppelin-solidity/blob/master/contracts/ECRecovery.sol>`_ of this code.
 
-  
+
 
 Verifying Payments
 ------------------
@@ -1101,7 +1103,7 @@ The recipient should verify each message using the following process:
     2. Verify that the new total is the expected amount.
     3. Verify that the new total does not exceed the amount of Ether escrowed.
     4. Verify that the signature is valid and comes from the payment channel sender.
-    
+
 We'll use the `ethereumjs-util <https://github.com/ethereumjs/ethereumjs-util>`_
 library to write this verifications. The final step can be done a number of ways,
 but if it's being done in **JavaScript**.
@@ -1117,14 +1119,14 @@ above:
             ["\x19Ethereum Signed Message:\n32", hash]
         );
     }
-    
+
     function recoverSigner(message, signature) {
         var split = ethereumjs.Util.fromRpcSig(signature);
         var publicKey = ethereumjs.Util.ecrecover(message, split.v, split.r, split.s);
         var signer = ethereumjs.Util.pubToAddress(publicKey).toString("hex");
         return signer;
     }
-    
+
     function isValidSignature(contractAddress, amount, signature, expectedSigner) {
         var message = prefixed(constructPaymentMessage(contractAddress, amount));
         var signer = recoverSigner(message, signature);

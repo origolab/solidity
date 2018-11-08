@@ -46,7 +46,7 @@ namespace
 bool successCompile(string const& _sourceCode)
 {
 	vector<string> errors;
-	bytes bytecode = eth::compileLLL(_sourceCode, dev::test::Options::get().evmVersion(), false, &errors);
+	bytes bytecode = lll::compileLLL(_sourceCode, dev::test::Options::get().evmVersion(), false, &errors);
 	if (!errors.empty())
 		return false;
 	if (bytecode.empty())
@@ -130,17 +130,17 @@ BOOST_AUTO_TEST_CASE(switch_inconsistent_return_count)
 BOOST_AUTO_TEST_CASE(disallowed_asm_instructions)
 {
 	for (unsigned i = 1; i <= 32; i++)
-		BOOST_CHECK(!successCompile("(asm PUSH" + boost::lexical_cast<string>(i) + ")"));
+		BOOST_CHECK(!successCompile("(asm PUSH" + to_string(i) + ")"));
 }
 
 BOOST_AUTO_TEST_CASE(disallowed_functional_asm_instructions)
 {
 	for (unsigned i = 1; i <= 32; i++)
-		BOOST_CHECK(!successCompile("(PUSH" + boost::lexical_cast<string>(i) + ")"));
+		BOOST_CHECK(!successCompile("(PUSH" + to_string(i) + ")"));
 	for (unsigned i = 1; i <= 16; i++)
-		BOOST_CHECK(!successCompile("(DUP" + boost::lexical_cast<string>(i) + ")"));
+		BOOST_CHECK(!successCompile("(DUP" + to_string(i) + ")"));
 	for (unsigned i = 1; i <= 16; i++)
-		BOOST_CHECK(!successCompile("(SWAP" + boost::lexical_cast<string>(i) + ")"));
+		BOOST_CHECK(!successCompile("(SWAP" + to_string(i) + ")"));
 	BOOST_CHECK(!successCompile("(JUMPDEST)"));
 }
 
@@ -186,6 +186,7 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_functional)
 		"60006000600060003c",
 		"3d",
 		"6000600060003e",
+		"60003f",
 		"600040",
 		"41",
 		"42",
@@ -291,6 +292,7 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_functional)
 		"{ (EXTCODECOPY 0 0 0 0) }",
 		"{ (RETURNDATASIZE) }",
 		"{ (RETURNDATACOPY 0 0 0) }",
+		"{ (EXTCODEHASH 0) }",
 		"{ (BLOCKHASH 0) }",
 		"{ (COINBASE) }",
 		"{ (TIMESTAMP) }",
@@ -356,9 +358,10 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_functional)
 		"{ (SELFDESTRUCT 0) }"
 	};
 
-	for (size_t i = 0; i < opcodes_bytecode.size(); i++) {
+	for (size_t i = 0; i < opcodes_bytecode.size(); i++)
+	{
 		vector<string> errors;
-		bytes code = eth::compileLLL(opcodes_lll[i], dev::test::Options::get().evmVersion(), false, &errors);
+		bytes code = lll::compileLLL(opcodes_lll[i], dev::test::Options::get().evmVersion(), false, &errors);
 
 		BOOST_REQUIRE_MESSAGE(errors.empty(), opcodes_lll[i]);
 
@@ -408,6 +411,7 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_asm)
 		"3c",
 		"3d",
 		"3e",
+		"3f",
 		"40",
 		"41",
 		"42",
@@ -546,6 +550,7 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_asm)
 		"{ (asm EXTCODECOPY) }",
 		"{ (asm RETURNDATASIZE) }",
 		"{ (asm RETURNDATACOPY) }",
+		"{ (asm EXTCODEHASH) }",
 		"{ (asm BLOCKHASH) }",
 		"{ (asm COINBASE) }",
 		"{ (asm TIMESTAMP) }",
@@ -644,9 +649,10 @@ BOOST_AUTO_TEST_CASE(valid_opcodes_asm)
 		"{ (asm SELFDESTRUCT) }"
 	};
 
-	for (size_t i = 0; i < opcodes_bytecode.size(); i++) {
+	for (size_t i = 0; i < opcodes_bytecode.size(); i++)
+	{
 		vector<string> errors;
-		bytes code = eth::compileLLL(opcodes_lll[i], dev::test::Options::get().evmVersion(), false, &errors);
+		bytes code = lll::compileLLL(opcodes_lll[i], dev::test::Options::get().evmVersion(), false, &errors);
 
 		BOOST_REQUIRE_MESSAGE(errors.empty(), opcodes_lll[i]);
 

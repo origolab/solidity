@@ -26,7 +26,7 @@
 
 #include <boost/algorithm/string.hpp>
 
-#include <ctype.h>
+#include <cctype>
 #include <algorithm>
 
 using namespace std;
@@ -97,7 +97,7 @@ assembly::Statement Parser::parseStatement()
 			fatalParserError("Only one default case allowed.");
 		else if (m_scanner->currentToken() == Token::Case)
 			fatalParserError("Case not allowed after default case.");
-		if (_switch.cases.size() == 0)
+		if (_switch.cases.empty())
 			fatalParserError("Switch statement without any cases.");
 		_switch.location.end = _switch.cases.back().body.location.end;
 		return _switch;
@@ -112,8 +112,8 @@ assembly::Statement Parser::parseStatement()
 		advance();
 		expectToken(Token::Colon);
 		assignment.variableName.location = location();
-		assignment.variableName.name = currentLiteral();
-		if (instructions().count(assignment.variableName.name))
+		assignment.variableName.name = YulString(currentLiteral());
+		if (instructions().count(assignment.variableName.name.str()))
 			fatalParserError("Identifier expected, got instruction name.");
 		assignment.location.end = endPosition();
 		expectToken(Token::Identifier);
@@ -173,7 +173,7 @@ assembly::Statement Parser::parseStatement()
 		if (currentToken() == Token::Assign && peekNextToken() != Token::Colon)
 		{
 			assembly::Assignment assignment = createWithLocation<assembly::Assignment>(identifier.location);
-			if (m_flavour != AsmFlavour::Yul && instructions().count(identifier.name))
+			if (m_flavour != AsmFlavour::Yul && instructions().count(identifier.name.str()))
 				fatalParserError("Cannot use instruction names for identifier names.");
 			advance();
 			assignment.variableNames.emplace_back(identifier);
@@ -279,7 +279,7 @@ assembly::Expression Parser::parseExpression()
 				"Expected '(' (instruction \"" +
 				instructionNames().at(instr.instruction) +
 				"\" expects " +
-				boost::lexical_cast<string>(args) +
+				to_string(args) +
 				" arguments)"
 			));
 	}
@@ -363,7 +363,7 @@ Parser::ElementaryOperation Parser::parseElementaryOperation()
 			ret = Instruction{location(), instr};
 		}
 		else
-			ret = Identifier{location(), literal};
+			ret = Identifier{location(), YulString{literal}};
 		advance();
 		break;
 	}
@@ -394,15 +394,15 @@ Parser::ElementaryOperation Parser::parseElementaryOperation()
 		Literal literal{
 			location(),
 			kind,
-			currentLiteral(),
-			""
+			YulString{currentLiteral()},
+			{}
 		};
 		advance();
 		if (m_flavour == AsmFlavour::Yul)
 		{
 			expectToken(Token::Colon);
 			literal.location.end = endPosition();
-			literal.type = expectAsmIdentifier();
+			literal.type = YulString{expectAsmIdentifier()};
 		}
 		else if (kind == LiteralKind::Boolean)
 			fatalParserError("True and false are not valid literals.");
@@ -449,7 +449,7 @@ assembly::FunctionDefinition Parser::parseFunctionDefinition()
 	RecursionGuard recursionGuard(*this);
 	FunctionDefinition funDef = createWithLocation<FunctionDefinition>();
 	expectToken(Token::Function);
-	funDef.name = expectAsmIdentifier();
+	funDef.name = YulString{expectAsmIdentifier()};
 	expectToken(Token::LParen);
 	while (currentToken() != Token::RParen)
 	{
@@ -502,7 +502,7 @@ assembly::Expression Parser::parseCall(Parser::ElementaryOperation&& _initialOp)
 					"Expected expression (instruction \"" +
 					instructionNames().at(instr) +
 					"\" expects " +
-					boost::lexical_cast<string>(args) +
+					to_string(args) +
 					" arguments)"
 				));
 
@@ -514,7 +514,7 @@ assembly::Expression Parser::parseCall(Parser::ElementaryOperation&& _initialOp)
 						"Expected ',' (instruction \"" +
 						instructionNames().at(instr) +
 						"\" expects " +
-						boost::lexical_cast<string>(args) +
+						to_string(args) +
 						" arguments)"
 					));
 				else
@@ -527,7 +527,7 @@ assembly::Expression Parser::parseCall(Parser::ElementaryOperation&& _initialOp)
 				"Expected ')' (instruction \"" +
 				instructionNames().at(instr) +
 				"\" expects " +
-				boost::lexical_cast<string>(args) +
+				to_string(args) +
 				" arguments)"
 			));
 		expectToken(Token::RParen);
@@ -564,12 +564,12 @@ TypedName Parser::parseTypedName()
 {
 	RecursionGuard recursionGuard(*this);
 	TypedName typedName = createWithLocation<TypedName>();
-	typedName.name = expectAsmIdentifier();
+	typedName.name = YulString{expectAsmIdentifier()};
 	if (m_flavour == AsmFlavour::Yul)
 	{
 		expectToken(Token::Colon);
 		typedName.location.end = endPosition();
-		typedName.type = expectAsmIdentifier();
+		typedName.type = YulString{expectAsmIdentifier()};
 	}
 	return typedName;
 }

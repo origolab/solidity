@@ -142,9 +142,13 @@ void CompilerUtils::storeInMemory(unsigned _offset)
 
 void CompilerUtils::storeInMemoryDynamic(Type const& _type, bool _padToWordBoundaries)
 {
+	// process special types (Reference, StringLiteral, Function)
 	if (auto ref = dynamic_cast<ReferenceType const*>(&_type))
 	{
-		solUnimplementedAssert(ref->location() == DataLocation::Memory, "Only in-memory reference type can be stored.");
+		solUnimplementedAssert(
+			ref->location() == DataLocation::Memory,
+			"Only in-memory reference type can be stored."
+		);
 		storeInMemoryDynamic(IntegerType(256), _padToWordBoundaries);
 	}
 	else if (auto str = dynamic_cast<StringLiteralType const*>(&_type))
@@ -166,18 +170,18 @@ void CompilerUtils::storeInMemoryDynamic(Type const& _type, bool _padToWordBound
 		m_context << Instruction::DUP2 << Instruction::MSTORE;
 		m_context << u256(_padToWordBoundaries ? 32 : 24) << Instruction::ADD;
 	}
-	else
+	else if (_type.isValueType())
 	{
 		unsigned numBytes = prepareMemoryStore(_type, _padToWordBoundaries);
-		if (numBytes > 0)
-		{
-			solUnimplementedAssert(
-				_type.sizeOnStack() == 1,
-				"Memory store of types with stack size != 1 not implemented."
-			);
-			m_context << Instruction::DUP2 << Instruction::MSTORE;
-			m_context << u256(numBytes) << Instruction::ADD;
-		}
+		m_context << Instruction::DUP2 << Instruction::MSTORE;
+		m_context << u256(numBytes) << Instruction::ADD;
+	}
+	else // Should never happen
+	{
+		solAssert(
+			false,
+			"Memory store of type " + _type.toString(true) + " not allowed."
+		);
 	}
 }
 
@@ -333,26 +337,19 @@ void CompilerUtils::encodeToMemory(
 )
 {
 	// stack: <v1> <v2> ... <vn> <mem>
+	bool const encoderV2 = m_context.experimentalFeatureActive(ExperimentalFeature::ABIEncoderV2);
 	TypePointers targetTypes = _targetTypes.empty() ? _givenTypes : _targetTypes;
 	solAssert(targetTypes.size() == _givenTypes.size(), "");
 	for (TypePointer& t: targetTypes)
 	{
-		solUnimplementedAssert(
-			t->mobileType() &&
-			t->mobileType()->interfaceType(_encodeAsLibraryTypes) &&
-			t->mobileType()->interfaceType(_encodeAsLibraryTypes)->encodingType(),
-			"Encoding type \"" + t->toString() + "\" not yet implemented."
-		);
-		t = t->mobileType()->interfaceType(_encodeAsLibraryTypes)->encodingType();
+		TypePointer tEncoding = t->fullEncodingType(_encodeAsLibraryTypes, encoderV2, !_padToWordBoundaries);
+		solUnimplementedAssert(tEncoding, "Encoding type \"" + t->toString() + "\" not yet implemented.");
+		t = std::move(tEncoding);
 	}
 
 	if (_givenTypes.empty())
 		return;
-	else if (
-		_padToWordBoundaries &&
-		!_copyDynamicDataInPlace &&
-		m_context.experimentalFeatureActive(ExperimentalFeature::ABIEncoderV2)
-	)
+	else if (_padToWordBoundaries && !_copyDynamicDataInPlace && encoderV2)
 	{
 		// Use the new Yul-based encoding function
 		auto stackHeightBefore = m_context.stackHeight();
@@ -664,6 +661,11 @@ void CompilerUtils::convertType(
 			if (targetIntegerType.numBits() < typeOnStack.numBytes() * 8)
 				convertType(IntegerType(typeOnStack.numBytes() * 8), _targetType, _cleanupNeeded);
 		}
+		else if (targetTypeCategory == Type::Category::Address)
+		{
+			solAssert(typeOnStack.numBytes() * 8 == 160, "");
+			rightShiftNumberOnStack(256 - 160);
+		}
 		else
 		{
 			// clear for conversion to longer bytes
@@ -697,23 +699,33 @@ void CompilerUtils::convertType(
 		break;
 	case Type::Category::FixedPoint:
 		solUnimplemented("Not yet implemented - FixedPointType.");
+	case Type::Category::Address:
 	case Type::Category::Integer:
 	case Type::Category::Contract:
 	case Type::Category::RationalNumber:
 		if (targetTypeCategory == Type::Category::FixedBytes)
 		{
-			solAssert(stackTypeCategory == Type::Category::Integer || stackTypeCategory == Type::Category::RationalNumber,
-				"Invalid conversion to FixedBytesType requested.");
+			solAssert(
+				stackTypeCategory == Type::Category::Address ||
+				stackTypeCategory == Type::Category::Integer ||
+				stackTypeCategory == Type::Category::RationalNumber,
+				"Invalid conversion to FixedBytesType requested."
+			);
 			// conversion from bytes to string. no need to clean the high bit
 			// only to shift left because of opposite alignment
 			FixedBytesType const& targetBytesType = dynamic_cast<FixedBytesType const&>(_targetType);
 			if (auto typeOnStack = dynamic_cast<IntegerType const*>(&_typeOnStack))
+			{
 				if (targetBytesType.numBytes() * 8 > typeOnStack->numBits())
 					cleanHigherOrderBits(*typeOnStack);
+			}
+			else if (stackTypeCategory == Type::Category::Address)
+				solAssert(targetBytesType.numBytes() * 8 == 160, "");
 			leftShiftNumberOnStack(256 - targetBytesType.numBytes() * 8);
 		}
 		else if (targetTypeCategory == Type::Category::Enum)
 		{
+			solAssert(stackTypeCategory != Type::Category::Address, "Invalid conversion to EnumType requested.");
 			solAssert(_typeOnStack.mobileType(), "");
 			// just clean
 			convertType(_typeOnStack, *_typeOnStack.mobileType(), true);
@@ -740,8 +752,8 @@ void CompilerUtils::convertType(
 		}
 		else
 		{
-			solAssert(targetTypeCategory == Type::Category::Integer || targetTypeCategory == Type::Category::Contract, "");
-			IntegerType addressType(160, IntegerType::Modifier::Address);
+			solAssert(targetTypeCategory == Type::Category::Integer || targetTypeCategory == Type::Category::Contract || targetTypeCategory == Type::Category::Address, "");
+			IntegerType addressType(160);
 			IntegerType const& targetType = targetTypeCategory == Type::Category::Integer
 				? dynamic_cast<IntegerType const&>(_targetType) : addressType;
 			if (stackTypeCategory == Type::Category::RationalNumber)
@@ -887,15 +899,6 @@ void CompilerUtils::convertType(
 					typeOnStack.location() == DataLocation::CallData,
 				"Invalid conversion to calldata type.");
 			break;
-		default:
-			solAssert(
-				false,
-				"Invalid type conversion " +
-				_typeOnStack.toString(false) +
-				" to " +
-				_targetType.toString(false) +
-				" requested."
-			);
 		}
 		break;
 	}
@@ -954,20 +957,12 @@ void CompilerUtils::convertType(
 	{
 		TupleType const& sourceTuple = dynamic_cast<TupleType const&>(_typeOnStack);
 		TupleType const& targetTuple = dynamic_cast<TupleType const&>(_targetType);
-		// fillRight: remove excess values at right side, !fillRight: remove eccess values at left side
-		bool fillRight = !targetTuple.components().empty() && (
-			!targetTuple.components().back() ||
-			targetTuple.components().front()
-		);
+		solAssert(targetTuple.components().size() == sourceTuple.components().size(), "");
 		unsigned depth = sourceTuple.sizeOnStack();
 		for (size_t i = 0; i < sourceTuple.components().size(); ++i)
 		{
 			TypePointer sourceType = sourceTuple.components()[i];
-			TypePointer targetType;
-			if (fillRight && i < targetTuple.components().size())
-				targetType = targetTuple.components()[i];
-			else if (!fillRight && targetTuple.components().size() + i >= sourceTuple.components().size())
-				targetType = targetTuple.components()[targetTuple.components().size() - (sourceTuple.components().size() - i)];
+			TypePointer targetType = targetTuple.components()[i];
 			if (!sourceType)
 			{
 				solAssert(!targetType, "");
@@ -1011,10 +1006,8 @@ void CompilerUtils::convertType(
 			m_context << Instruction::ISZERO << Instruction::ISZERO;
 		break;
 	default:
-		if (stackTypeCategory == Type::Category::Function && targetTypeCategory == Type::Category::Integer)
+		if (stackTypeCategory == Type::Category::Function && targetTypeCategory == Type::Category::Address)
 		{
-			IntegerType const& targetType = dynamic_cast<IntegerType const&>(_targetType);
-			solAssert(targetType.isAddress(), "Function type can only be converted to address.");
 			FunctionType const& typeOnStack = dynamic_cast<FunctionType const&>(_typeOnStack);
 			solAssert(typeOnStack.kind() == FunctionType::Kind::External, "Only external function type can be converted.");
 
@@ -1277,18 +1270,30 @@ void CompilerUtils::rightShiftNumberOnStack(unsigned _bits)
 
 unsigned CompilerUtils::prepareMemoryStore(Type const& _type, bool _padToWords)
 {
+	solAssert(
+		_type.sizeOnStack() == 1,
+		"Memory store of types with stack size != 1 not allowed (Type: " + _type.toString(true) + ")."
+	);
+
 	unsigned numBytes = _type.calldataEncodedSize(_padToWords);
+
+	solAssert(
+		numBytes > 0,
+		"Memory store of 0 bytes requested (Type: " + _type.toString(true) + ")."
+	);
+
+	solAssert(
+		numBytes <= 32,
+		"Memory store of more than 32 bytes requested (Type: " + _type.toString(true) + ")."
+	);
+
 	bool leftAligned = _type.category() == Type::Category::FixedBytes;
-	if (numBytes == 0)
-		m_context << Instruction::POP;
-	else
-	{
-		solAssert(numBytes <= 32, "Memory store of more than 32 bytes requested.");
-		convertType(_type, _type, true);
-		if (numBytes != 32 && !leftAligned && !_padToWords)
-			// shift the value accordingly before storing
-			leftShiftNumberOnStack((32 - numBytes) * 8);
-	}
+
+	convertType(_type, _type, true);
+	if (numBytes != 32 && !leftAligned && !_padToWords)
+		// shift the value accordingly before storing
+		leftShiftNumberOnStack((32 - numBytes) * 8);
+
 	return numBytes;
 }
 

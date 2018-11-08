@@ -56,7 +56,7 @@ static char const* walletCode = R"DELIMITER(
 // some number (specified in constructor) of the set of owners (specified in the constructor, modifiable) before the
 // interior is executed.
 
-pragma solidity ^0.4.0;
+pragma solidity >=0.4.0 <0.6.0;
 
 contract multiowned {
 
@@ -199,7 +199,7 @@ contract multiowned {
 		// determine what index the present sender is:
 		uint ownerIndex = m_ownerIndex[uint(msg.sender)];
 		// make sure they're an owner
-		if (ownerIndex == 0) return;
+		if (ownerIndex == 0) return false;
 
 		PendingState storage pending = m_pending[_operation];
 		// if we're not yet working on this operation, switch over and reset the confirmation status.
@@ -228,6 +228,7 @@ contract multiowned {
 				// not enough: record that this owner in particular confirmed.
 				pending.yetNeeded--;
 				pending.ownersDone |= ownerIndexBit;
+				return false;
 			}
 		}
 	}
@@ -347,7 +348,7 @@ contract multisig {
 
 	// TODO: document
 	function changeOwner(address _from, address _to) external;
-	function execute(address _to, uint _value, bytes _data) external returns (bytes32);
+	function execute(address _to, uint _value, bytes calldata _data) external returns (bytes32);
 	function confirm(bytes32 _h) public returns (bool);
 }
 
@@ -374,7 +375,7 @@ contract Wallet is multisig, multiowned, daylimit {
 	}
 
 	// destroys the contract sending everything to `_to`.
-	function kill(address _to) onlymanyowners(keccak256(msg.data)) external {
+	function kill(address payable _to) onlymanyowners(keccak256(msg.data)) external {
 		selfdestruct(_to);
 	}
 
@@ -389,7 +390,7 @@ contract Wallet is multisig, multiowned, daylimit {
 	// If not, goes into multisig process. We provide a hash on return to allow the sender to provide
 	// shortcuts for the other confirmations (allowing them to avoid replicating the _to, _value
 	// and _data arguments). They still get the option of using them if they want, anyways.
-	function execute(address _to, uint _value, bytes _data) external onlyowner returns (bytes32 _r) {
+	function execute(address _to, uint _value, bytes calldata _data) external onlyowner returns (bytes32 _r) {
 		// first, take the opportunity to check that we're under the daily limit.
 		if (underLimit(_value)) {
 			emit SingleTransact(msg.sender, _value, _to, _data);

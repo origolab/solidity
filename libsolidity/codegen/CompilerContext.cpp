@@ -32,6 +32,7 @@
 #include <libsolidity/inlineasm/AsmCodeGen.h>
 #include <libsolidity/inlineasm/AsmAnalysis.h>
 #include <libsolidity/inlineasm/AsmAnalysisInfo.h>
+#include <libyul/YulString.h>
 
 #include <boost/algorithm/string/replace.hpp>
 
@@ -313,32 +314,33 @@ void CompilerContext::resetVisitedNodes(ASTNode const* _node)
 void CompilerContext::appendInlineAssembly(
 	string const& _assembly,
 	vector<string> const& _localVariables,
+	set<string> const&,
 	bool _system
 )
 {
 	int startStackHeight = stackHeight();
 
-	julia::ExternalIdentifierAccess identifierAccess;
+	yul::ExternalIdentifierAccess identifierAccess;
 	identifierAccess.resolve = [&](
 		assembly::Identifier const& _identifier,
-		julia::IdentifierContext,
+		yul::IdentifierContext,
 		bool
 	)
 	{
-		auto it = std::find(_localVariables.begin(), _localVariables.end(), _identifier.name);
+		auto it = std::find(_localVariables.begin(), _localVariables.end(), _identifier.name.str());
 		return it == _localVariables.end() ? size_t(-1) : 1;
 	};
 	identifierAccess.generateCode = [&](
 		assembly::Identifier const& _identifier,
-		julia::IdentifierContext _context,
-		julia::AbstractAssembly& _assembly
+		yul::IdentifierContext _context,
+		yul::AbstractAssembly& _assembly
 	)
 	{
-		auto it = std::find(_localVariables.begin(), _localVariables.end(), _identifier.name);
+		auto it = std::find(_localVariables.begin(), _localVariables.end(), _identifier.name.str());
 		solAssert(it != _localVariables.end(), "");
 		int stackDepth = _localVariables.end() - it;
 		int stackDiff = _assembly.stackHeight() - startStackHeight + stackDepth;
-		if (_context == julia::IdentifierContext::LValue)
+		if (_context == yul::IdentifierContext::LValue)
 			stackDiff -= 1;
 		if (stackDiff < 1 || stackDiff > 16)
 			BOOST_THROW_EXCEPTION(
@@ -346,7 +348,7 @@ void CompilerContext::appendInlineAssembly(
 				errinfo_sourceLocation(_identifier.location) <<
 				errinfo_comment("Stack too deep (" + to_string(stackDiff) + "), try removing local variables.")
 			);
-		if (_context == julia::IdentifierContext::RValue)
+		if (_context == yul::IdentifierContext::RValue)
 			_assembly.appendInstruction(dupInstruction(stackDiff));
 		else
 		{
@@ -411,7 +413,7 @@ FunctionDefinition const& CompilerContext::resolveVirtualFunction(
 			if (
 				function->name() == name &&
 				!function->isConstructor() &&
-				FunctionType(*function).hasEqualArgumentTypes(functionType)
+				FunctionType(*function).hasEqualParameterTypes(functionType)
 			)
 				return *function;
 	solAssert(false, "Super function " + name + " not found.");

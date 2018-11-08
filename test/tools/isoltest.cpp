@@ -16,8 +16,12 @@
 */
 
 #include <libdevcore/CommonIO.h>
+
+#include <test/Common.h>
 #include <test/libsolidity/AnalysisFramework.h>
 #include <test/libsolidity/SyntaxTest.h>
+#include <test/libsolidity/ASTJSONTest.h>
+#include <test/libyul/YulOptimizerTest.h>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -44,8 +48,14 @@ namespace fs = boost::filesystem;
 struct TestStats
 {
 	int successCount;
-	int runCount;
-	operator bool() const { return successCount == runCount; }
+	int testCount;
+	operator bool() const { return successCount == testCount; }
+	TestStats& operator+=(TestStats const& _other) noexcept
+	{
+		successCount += _other.successCount;
+		testCount += _other.testCount;
+		return *this;
+	}
 };
 
 class TestTool
@@ -87,13 +97,15 @@ private:
 	Request handleResponse(bool const _exception);
 
 	TestCase::TestCaseCreator m_testCaseCreator;
-	bool const m_formatted;
+	bool const m_formatted = false;
 	string const m_name;
 	fs::path const m_path;
 	unique_ptr<TestCase> m_test;
+	static bool m_exitRequested;
 };
 
 string TestTool::editor;
+bool TestTool::m_exitRequested = false;
 
 TestTool::Result TestTool::process()
 {
@@ -119,7 +131,7 @@ TestTool::Result TestTool::process()
 			"Exception during syntax test: " << _e.what() << endl;
 		return Result::Exception;
 	}
-	catch(...)
+	catch (...)
 	{
 		FormattedScope(cout, m_formatted, {BOLD, RED}) <<
 			"Unknown exception during syntax test." << endl;
@@ -194,7 +206,7 @@ TestStats TestTool::processPath(
 	std::queue<fs::path> paths;
 	paths.push(_path);
 	int successCount = 0;
-	int runCount = 0;
+	int testCount = 0;
 
 	while (!paths.empty())
 	{
@@ -211,10 +223,15 @@ TestStats TestTool::processPath(
 				if (fs::is_directory(entry.path()) || TestCase::isTestFilename(entry.path().filename()))
 					paths.push(currentPath / entry.path().filename());
 		}
+		else if (m_exitRequested)
+		{
+			++testCount;
+			paths.pop();
+		}
 		else
 		{
+			++testCount;
 			TestTool testTool(_testCaseCreator, currentPath.string(), fullpath, _formatted);
-			++runCount;
 			auto result = testTool.process();
 
 			switch(result)
@@ -224,10 +241,12 @@ TestStats TestTool::processPath(
 				switch(testTool.handleResponse(result == Result::Exception))
 				{
 				case Request::Quit:
-					return { successCount, runCount };
+					paths.pop();
+					m_exitRequested = true;
+					break;
 				case Request::Rerun:
 					cout << "Re-running test case..." << endl;
-					--runCount;
+					--testCount;
 					break;
 				case Request::Skip:
 					paths.pop();
@@ -242,9 +261,12 @@ TestStats TestTool::processPath(
 		}
 	}
 
-	return { successCount, runCount };
+	return { successCount, testCount };
 
 }
+
+namespace
+{
 
 void setupTerminal()
 {
@@ -266,6 +288,36 @@ void setupTerminal()
 #endif
 }
 
+boost::optional<TestStats> runTestSuite(
+	string const& _name,
+	fs::path const& _basePath,
+	fs::path const& _subdirectory,
+	TestCase::TestCaseCreator _testCaseCreator,
+	bool _formatted
+)
+{
+	fs::path testPath = _basePath / _subdirectory;
+
+	if (!fs::exists(testPath) || !fs::is_directory(testPath))
+	{
+		cerr << _name << " tests not found. Use the --testpath argument." << endl;
+		return {};
+	}
+
+	TestStats stats = TestTool::processPath(_testCaseCreator, _basePath, _subdirectory, _formatted);
+
+	cout << endl << _name << " Test Summary: ";
+	FormattedScope(cout, _formatted, {BOLD, stats ? GREEN : RED}) <<
+		stats.successCount <<
+		"/" <<
+		stats.testCount;
+	cout << " tests successful." << endl << endl;
+
+	return stats;
+}
+
+}
+
 int main(int argc, char *argv[])
 {
 	setupTerminal();
@@ -276,6 +328,7 @@ int main(int argc, char *argv[])
 		TestTool::editor = "/usr/bin/editor";
 
 	fs::path testPath;
+	bool disableSMT = false;
 	bool formatted = true;
 	po::options_description options(
 		R"(isoltest, tool for interactively managing test contracts.
@@ -288,6 +341,7 @@ Allowed options)",
 	options.add_options()
 		("help", "Show this help screen.")
 		("testpath", po::value<fs::path>(&testPath), "path to test files")
+		("no-smt", "disable SMT checker")
 		("no-color", "don't use colors")
 		("editor", po::value<string>(&TestTool::editor), "editor for opening contracts");
 
@@ -308,6 +362,9 @@ Allowed options)",
 			formatted = false;
 
 		po::notify(arguments);
+
+		if (arguments.count("no-smt"))
+			disableSMT = true;
 	}
 	catch (std::exception const& _exception)
 	{
@@ -316,42 +373,51 @@ Allowed options)",
 	}
 
 	if (testPath.empty())
-	{
-		auto const searchPath =
-		{
-			fs::current_path() / ".." / ".." / ".." / "test",
-			fs::current_path() / ".." / ".." / "test",
-			fs::current_path() / ".." / "test",
-			fs::current_path() / "test",
-			fs::current_path()
-		};
-		for (auto const& basePath : searchPath)
-		{
-			fs::path syntaxTestPath = basePath / "libsolidity" / "syntaxTests";
-			if (fs::exists(syntaxTestPath) && fs::is_directory(syntaxTestPath))
-			{
-				testPath = basePath;
-				break;
-			}
-		}
-	}
+		testPath = dev::test::discoverTestPath();
 
-	fs::path syntaxTestPath = testPath / "libsolidity" / "syntaxTests";
+	TestStats global_stats{0, 0};
 
-	if (fs::exists(syntaxTestPath) && fs::is_directory(syntaxTestPath))
-	{
-		auto stats = TestTool::processPath(SyntaxTest::create, testPath / "libsolidity", "syntaxTests", formatted);
-
-		cout << endl << "Summary: ";
-		FormattedScope(cout, formatted, {BOLD, stats ? GREEN : RED}) <<
-			stats.successCount << "/" << stats.runCount;
-		cout << " tests successful." << endl;
-
-		return stats ? 0 : 1;
-	}
+	// Actually run the tests.
+	// If you add new tests here, you also have to add them in boostTest.cpp
+	if (auto stats = runTestSuite("Syntax", testPath / "libsolidity", "syntaxTests", SyntaxTest::create, formatted))
+		global_stats += *stats;
 	else
-	{
-		cerr << "Syntax tests not found. Use the --testpath argument." << endl;
 		return 1;
+
+	if (auto stats = runTestSuite("JSON AST", testPath / "libsolidity", "ASTJSON", ASTJSONTest::create, formatted))
+		global_stats += *stats;
+	else
+		return 1;
+
+	if (auto stats = runTestSuite(
+		"Yul Optimizer",
+		testPath / "libyul",
+		"yulOptimizerTests",
+		yul::test::YulOptimizerTest::create,
+		formatted
+	))
+		global_stats += *stats;
+	else
+		return 1;
+
+	if (!disableSMT)
+	{
+		if (auto stats = runTestSuite(
+			"SMT Checker",
+			testPath / "libsolidity",
+			"smtCheckerTests",
+			SyntaxTest::create,
+			formatted
+		))
+			global_stats += *stats;
+		else
+			return 1;
 	}
+
+	cout << endl << "Summary: ";
+	FormattedScope(cout, formatted, {BOLD, global_stats ? GREEN : RED}) <<
+		 global_stats.successCount << "/" << global_stats.testCount;
+	cout << " tests successful." << endl;
+
+	return global_stats ? 0 : 1;
 }

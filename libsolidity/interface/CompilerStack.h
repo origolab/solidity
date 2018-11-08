@@ -36,7 +36,6 @@
 #include <json/json.h>
 
 #include <boost/noncopyable.hpp>
-#include <boost/filesystem.hpp>
 
 #include <ostream>
 #include <string>
@@ -85,6 +84,13 @@ public:
 		CompilationSuccessful
 	};
 
+	struct Remapping
+	{
+		std::string context;
+		std::string prefix;
+		std::string target;
+	};
+
 	/// Creates a new compiler stack.
 	/// @param _readFile callback to used to read files for import statements. Must return
 	/// and must not emit exceptions.
@@ -104,8 +110,11 @@ public:
 	/// All settings, with the exception of remappings, are reset.
 	void reset(bool _keepSources = false);
 
-	/// Sets path remappings in the format "context:prefix=target"
-	void setRemappings(std::vector<std::string> const& _remappings);
+	// Parses a remapping of the format "context:prefix=target".
+	static boost::optional<Remapping> parseRemapping(std::string const& _remapping);
+
+	/// Sets path remappings.
+	void setRemappings(std::vector<Remapping> const& _remappings);
 
 	/// Sets library addresses. Addresses are cleared iff @a _libraries is missing.
 	/// Will not take effect before running compile.
@@ -190,12 +199,6 @@ public:
 	/// @returns the runtime object for the contract.
 	eth::LinkerObject const& runtimeObject(std::string const& _contractName) const;
 
-	/// @returns the bytecode of a contract that uses an already deployed contract via DELEGATECALL.
-	/// The returned bytes will contain a sequence of 20 bytes of the format "XXX...XXX" which have to
-	/// substituted by the actual address. Note that this sequence starts end ends in three X
-	/// characters but can contain anything in between.
-	eth::LinkerObject const& cloneObject(std::string const& _contractName) const;
-
 	/// @returns normal contract assembly items
 	eth::AssemblyItems const* assemblyItems(std::string const& _contractName) const;
 
@@ -258,7 +261,6 @@ private:
 		std::shared_ptr<Compiler> compiler;
 		eth::LinkerObject object; ///< Deployment object (includes the runtime sub-object).
 		eth::LinkerObject runtimeObject; ///< Runtime object.
-		eth::LinkerObject cloneObject; ///< Clone object (deprecated).
 		std::string metadata; ///< The metadata json that will be hashed into the chain.
 		mutable std::unique_ptr<Json::Value const> abi;
 		mutable std::unique_ptr<Json::Value const> userDocumentation;
@@ -273,12 +275,6 @@ private:
 	StringMap loadMissingSources(SourceUnit const& _ast, std::string const& _path);
 	std::string applyRemapping(std::string const& _path, std::string const& _context);
 	void resolveImports();
-
-	/// @returns the absolute path corresponding to @a _path relative to @a _reference.
-	static std::string absolutePath(std::string const& _path, std::string const& _reference);
-
-	/// Helper function to return path converted strings.
-	static std::string sanitizePath(std::string const& _path) { return boost::filesystem::path(_path).generic_string(); }
 
 	/// @returns true if the contract is requested to be compiled.
 	bool isRequestedContract(ContractDefinition const& _contract) const;
@@ -333,13 +329,6 @@ private:
 		FunctionDefinition const& _function
 	) const;
 
-	struct Remapping
-	{
-		std::string context;
-		std::string prefix;
-		std::string target;
-	};
-
 	ReadCallback::Callback m_readFile;
 	ReadCallback::Callback m_smtQuery;
 	bool m_optimize = false;
@@ -352,8 +341,9 @@ private:
 	std::vector<Remapping> m_remappings;
 	std::map<std::string const, Source> m_sources;
 	std::shared_ptr<GlobalContext> m_globalContext;
-	std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>> m_scopes;
 	std::vector<Source const*> m_sourceOrder;
+	/// This is updated during compilation.
+	std::map<ASTNode const*, std::shared_ptr<DeclarationContainer>> m_scopes;
 	std::map<std::string const, Contract> m_contracts;
 	ErrorList m_errorList;
 	ErrorReporter m_errorReporter;

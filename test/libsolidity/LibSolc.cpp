@@ -52,7 +52,7 @@ Json::Value compileMulti(string const& _input, bool _callback)
 {
 	string output(
 		_callback ?
-		compileJSONCallback(_input.c_str(), dev::test::Options::get().optimize, NULL) :
+		compileJSONCallback(_input.c_str(), dev::test::Options::get().optimize, nullptr) :
 		compileJSONMulti(_input.c_str(), dev::test::Options::get().optimize)
 	);
 	Json::Value ret;
@@ -62,7 +62,7 @@ Json::Value compileMulti(string const& _input, bool _callback)
 
 Json::Value compile(string const& _input)
 {
-	string output(compileStandard(_input.c_str(), NULL));
+	string output(compileStandard(_input.c_str(), nullptr));
 	Json::Value ret;
 	BOOST_REQUIRE(jsonParseStrict(output, ret));
 	return ret;
@@ -111,12 +111,12 @@ BOOST_AUTO_TEST_CASE(basic_compilation)
 	BOOST_CHECK(contract["bytecode"].isString());
 	BOOST_CHECK_EQUAL(
 		dev::test::bytecodeSansMetadata(contract["bytecode"].asString()),
-		"6080604052348015600f57600080fd5b50603580601d6000396000f3006080604052600080fd00"
+		"6080604052348015600f57600080fd5b50603580601d6000396000f3fe6080604052600080fdfe"
 	);
 	BOOST_CHECK(contract["runtimeBytecode"].isString());
 	BOOST_CHECK_EQUAL(
 		dev::test::bytecodeSansMetadata(contract["runtimeBytecode"].asString()),
-		"6080604052600080fd00"
+		"6080604052600080fdfe"
 	);
 	BOOST_CHECK(contract["functionHashes"].isObject());
 	BOOST_CHECK(contract["gasEstimates"].isObject());
@@ -153,12 +153,12 @@ BOOST_AUTO_TEST_CASE(single_compilation)
 	BOOST_CHECK(contract["bytecode"].isString());
 	BOOST_CHECK_EQUAL(
 		dev::test::bytecodeSansMetadata(contract["bytecode"].asString()),
-		"6080604052348015600f57600080fd5b50603580601d6000396000f3006080604052600080fd00"
+		"6080604052348015600f57600080fd5b50603580601d6000396000f3fe6080604052600080fdfe"
 	);
 	BOOST_CHECK(contract["runtimeBytecode"].isString());
 	BOOST_CHECK_EQUAL(
 		dev::test::bytecodeSansMetadata(contract["runtimeBytecode"].asString()),
-		"6080604052600080fd00"
+		"6080604052600080fdfe"
 	);
 	BOOST_CHECK(contract["functionHashes"].isObject());
 	BOOST_CHECK(contract["gasEstimates"].isObject());

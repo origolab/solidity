@@ -44,7 +44,7 @@ and ``mod`` are available either natively or as functions and computes exponenti
             switch exponent
             case 0:u256 { result := 1:u256 }
             case 1:u256 { result := base }
-            default:
+            default
             {
                 result := power(mul(base, base), div(exponent, 2:u256))
                 switch mod(exponent, 2:u256)
@@ -83,6 +83,7 @@ Grammar::
         FunctionDefinition |
         VariableDeclaration |
         Assignment |
+        If |
         Expression |
         Switch |
         ForLoop |
@@ -99,16 +100,18 @@ Grammar::
     If =
         'if' Expression Block
     Switch =
-        'switch' Expression Case* ( 'default' Block )?
+        'switch' Expression ( Case+ Default? | Default )
     Case =
         'case' Literal Block
+    Default =
+        'default' Block
     ForLoop =
         'for' Block Expression Block Block
     BreakContinue =
         'break' | 'continue'
     FunctionCall =
         Identifier '(' ( Expression ( ',' Expression )* )? ')'
-    Identifier = [a-zA-Z_$] [a-zA-Z_0-9]*
+    Identifier = [a-zA-Z_$] [a-zA-Z_$0-9]*
     IdentifierList = Identifier ( ',' Identifier)*
     TypeName = Identifier | BuiltinTypeName
     BuiltinTypeName = 'bool' | [us] ( '8' | '32' | '64' | '128' | '256' )
@@ -412,8 +415,14 @@ The following functions must be available:
 +---------------------------------------------+-----------------------------------------------------------------+
 | *Execution control*                                                                                           |
 +---------------------------------------------+-----------------------------------------------------------------+
-| create(v:u256, p:u256, s:u256)              | create new contract with code mem[p..(p+s)) and send v wei      |
+| create(v:u256, p:u256, n:u256)              | create new contract with code mem[p..(p+n)) and send v wei      |
 |                                             | and return the new address                                      |
++---------------------------------------------+-----------------------------------------------------------------+
+| create2(v:u256, p:u256, n:u256, s:u256)     | create new contract with code mem[p...(p+n)) at address         |
+|                                             | keccak256(0xff . this . s . keccak256(mem[p...(p+n)))           |
+|                                             | and send v wei and return the new address, where ``0xff`` is a  |
+|                                             | 8 byte value, ``this`` is the current contract's address        |
+|                                             | as a 20 byte value and ``s`` is a big-endian 256-bit value      |
 +---------------------------------------------+-----------------------------------------------------------------+
 | call(g:u256, a:u256, v:u256, in:u256,       | call contract at address a with input mem[in..(in+insize))      |
 | insize:u256, out:u256,                      | providing g gas and v wei and output area                       |
@@ -489,6 +498,8 @@ The following functions must be available:
 | extcodesize(a:u256) -> size:u256            | size of the code at address a                                   |
 +---------------------------------------------+-----------------------------------------------------------------+
 | extcodecopy(a:u256, t:u256, f:u256, s:u256) | like codecopy(t, f, s) but take code at address a               |
++---------------------------------------------+-----------------------------------------------------------------+
+| extcodehash(a:u256)                         | code hash of address a                                          |
 +---------------------------------------------+-----------------------------------------------------------------+
 | *Others*                                                                                                      |
 +---------------------------------------------+-----------------------------------------------------------------+

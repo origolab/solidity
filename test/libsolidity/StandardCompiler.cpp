@@ -225,6 +225,71 @@ BOOST_AUTO_TEST_CASE(smoke_test)
 	BOOST_CHECK(containsAtMostWarnings(result));
 }
 
+BOOST_AUTO_TEST_CASE(optimizer_enabled_not_boolean)
+{
+	char const* input = R"(
+	{
+		"language": "Solidity",
+		"settings": {
+			"optimizer": {
+				"enabled": "wrong"
+			}
+		},
+		"sources": {
+			"empty": {
+				"content": ""
+			}
+		}
+	}
+	)";
+	Json::Value result = compile(input);
+	BOOST_CHECK(containsError(result, "JSONError", "The \"enabled\" setting must be a boolean."));
+}
+
+BOOST_AUTO_TEST_CASE(optimizer_runs_not_a_number)
+{
+	char const* input = R"(
+	{
+		"language": "Solidity",
+		"settings": {
+			"optimizer": {
+				"enabled": true,
+				"runs": "not a number"
+			}
+		},
+		"sources": {
+			"empty": {
+				"content": ""
+			}
+		}
+	}
+	)";
+	Json::Value result = compile(input);
+	BOOST_CHECK(containsError(result, "JSONError", "The \"runs\" setting must be an unsigned number."));
+}
+
+BOOST_AUTO_TEST_CASE(optimizer_runs_not_an_unsigned_number)
+{
+	char const* input = R"(
+	{
+		"language": "Solidity",
+		"settings": {
+			"optimizer": {
+				"enabled": true,
+				"runs": -1
+			}
+		},
+		"sources": {
+			"empty": {
+				"content": ""
+			}
+		}
+	}
+	)";
+	Json::Value result = compile(input);
+	BOOST_CHECK(containsError(result, "JSONError", "The \"runs\" setting must be an unsigned number."));
+}
+
 BOOST_AUTO_TEST_CASE(basic_compilation)
 {
 	char const* input = R"(
@@ -238,7 +303,7 @@ BOOST_AUTO_TEST_CASE(basic_compilation)
 		"settings": {
 			"outputSelection": {
 				"fileA": {
-					"A": [ "abi", "devdoc", "userdoc", "evm.bytecode", "evm.assembly", "evm.gasEstimates", "metadata" ],
+					"A": [ "abi", "devdoc", "userdoc", "evm.bytecode", "evm.assembly", "evm.gasEstimates", "evm.legacyAssembly", "metadata" ],
 					"": [ "legacyAST" ]
 				}
 			}
@@ -261,7 +326,7 @@ BOOST_AUTO_TEST_CASE(basic_compilation)
 	BOOST_CHECK(contract["evm"]["bytecode"]["object"].isString());
 	BOOST_CHECK_EQUAL(
 		dev::test::bytecodeSansMetadata(contract["evm"]["bytecode"]["object"].asString()),
-		"6080604052348015600f57600080fd5b50603580601d6000396000f3006080604052600080fd00"
+		"6080604052348015600f57600080fd5b50603580601d6000396000f3fe6080604052600080fdfe"
 	);
 	BOOST_CHECK(contract["evm"]["assembly"].isString());
 	BOOST_CHECK(contract["evm"]["assembly"].asString().find(
@@ -279,6 +344,34 @@ BOOST_AUTO_TEST_CASE(basic_compilation)
 	BOOST_CHECK_EQUAL(
 		dev::jsonCompactPrint(contract["evm"]["gasEstimates"]),
 		"{\"creation\":{\"codeDepositCost\":\"10600\",\"executionCost\":\"66\",\"totalCost\":\"10666\"}}"
+	);
+	// Lets take the top level `.code` section (the "deployer code"), that should expose most of the features of
+	// the assembly JSON. What we want to check here is Operation, Push, PushTag, PushSub, PushSubSize and Tag.
+	BOOST_CHECK(contract["evm"]["legacyAssembly"].isObject());
+	BOOST_CHECK(contract["evm"]["legacyAssembly"][".code"].isArray());
+	BOOST_CHECK_EQUAL(
+		dev::jsonCompactPrint(contract["evm"]["legacyAssembly"][".code"]),
+		"[{\"begin\":0,\"end\":14,\"name\":\"PUSH\",\"value\":\"80\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"PUSH\",\"value\":\"40\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"MSTORE\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"CALLVALUE\"},"
+		"{\"begin\":8,\"end\":17,\"name\":\"DUP1\"},"
+		"{\"begin\":5,\"end\":7,\"name\":\"ISZERO\"},"
+		"{\"begin\":5,\"end\":7,\"name\":\"PUSH [tag]\",\"value\":\"1\"},"
+		"{\"begin\":5,\"end\":7,\"name\":\"JUMPI\"},"
+		"{\"begin\":30,\"end\":31,\"name\":\"PUSH\",\"value\":\"0\"},"
+		"{\"begin\":27,\"end\":28,\"name\":\"DUP1\"},"
+		"{\"begin\":20,\"end\":32,\"name\":\"REVERT\"},"
+		"{\"begin\":5,\"end\":7,\"name\":\"tag\",\"value\":\"1\"},"
+		"{\"begin\":5,\"end\":7,\"name\":\"JUMPDEST\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"POP\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"PUSH #[$]\",\"value\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"DUP1\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"PUSH [$]\",\"value\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"PUSH\",\"value\":\"0\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"CODECOPY\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"PUSH\",\"value\":\"0\"},"
+		"{\"begin\":0,\"end\":14,\"name\":\"RETURN\"}]"
 	);
 	BOOST_CHECK(contract["metadata"].isString());
 	BOOST_CHECK(dev::test::isValidMetadata(contract["metadata"].asString()));
@@ -612,7 +705,7 @@ BOOST_AUTO_TEST_CASE(libraries_invalid_entry)
 	}
 	)";
 	Json::Value result = compile(input);
-	BOOST_CHECK(containsError(result, "JSONError", "library entry is not a JSON object."));
+	BOOST_CHECK(containsError(result, "JSONError", "Library entry is not a JSON object."));
 }
 
 BOOST_AUTO_TEST_CASE(libraries_invalid_hex)

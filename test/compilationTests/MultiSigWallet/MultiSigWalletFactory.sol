@@ -1,4 +1,4 @@
-pragma solidity ^0.4.4;
+pragma solidity >=0.0;
 import "Factory.sol";
 import "MultiSigWallet.sol";
 
@@ -15,7 +15,7 @@ contract MultiSigWalletFactory is Factory {
         public
         returns (address wallet)
     {
-        wallet = new MultiSigWallet(_owners, _required);
+        wallet = address(new MultiSigWallet(_owners, _required));
         register(wallet);
     }
 }

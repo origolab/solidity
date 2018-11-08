@@ -80,7 +80,6 @@ static string const g_strAstJson = "ast-json";
 static string const g_strAstCompactJson = "ast-compact-json";
 static string const g_strBinary = "bin";
 static string const g_strBinaryRuntime = "bin-runtime";
-static string const g_strCloneBinary = "clone-bin";
 static string const g_strCombinedJson = "combined-json";
 static string const g_strCompactJSON = "compact-format";
 static string const g_strContracts = "contracts";
@@ -128,7 +127,6 @@ static string const g_argAstCompactJson = g_strAstCompactJson;
 static string const g_argAstJson = g_strAstJson;
 static string const g_argBinary = g_strBinary;
 static string const g_argBinaryRuntime = g_strBinaryRuntime;
-static string const g_argCloneBinary = g_strCloneBinary;
 static string const g_argCombinedJson = g_strCombinedJson;
 static string const g_argCompactJSON = g_strCompactJSON;
 static string const g_argGas = g_strGas;
@@ -161,7 +159,6 @@ static set<string> const g_combinedJsonArgs
 	g_strAst,
 	g_strBinary,
 	g_strBinaryRuntime,
-	g_strCloneBinary,
 	g_strCompactJSON,
 	g_strInterface,
 	g_strMetadata,
@@ -213,7 +210,6 @@ static bool needsHumanTargetedStdout(po::variables_map const& _args)
 		g_argAstJson,
 		g_argBinary,
 		g_argBinaryRuntime,
-		g_argCloneBinary,
 		g_argMetadata,
 		g_argNatspecUser,
 		g_argNatspecDev,
@@ -230,31 +226,21 @@ void CommandLineInterface::handleBinary(string const& _contract)
 	if (m_args.count(g_argBinary))
 	{
 		if (m_args.count(g_argOutputDir))
-			createFile(m_compiler->filesystemFriendlyName(_contract) + ".bin", m_compiler->object(_contract).toHex());
+			createFile(m_compiler->filesystemFriendlyName(_contract) + ".bin", objectWithLinkRefsHex(m_compiler->object(_contract)));
 		else
 		{
 			cout << "Binary: " << endl;
-			cout << m_compiler->object(_contract).toHex() << endl;
-		}
-	}
-	if (m_args.count(g_argCloneBinary))
-	{
-		if (m_args.count(g_argOutputDir))
-			createFile(m_compiler->filesystemFriendlyName(_contract) + ".clone_bin", m_compiler->cloneObject(_contract).toHex());
-		else
-		{
-			cout << "Clone Binary: " << endl;
-			cout << m_compiler->cloneObject(_contract).toHex() << endl;
+			cout << objectWithLinkRefsHex(m_compiler->object(_contract)) << endl;
 		}
 	}
 	if (m_args.count(g_argBinaryRuntime))
 	{
 		if (m_args.count(g_argOutputDir))
-			createFile(m_compiler->filesystemFriendlyName(_contract) + ".bin-runtime", m_compiler->runtimeObject(_contract).toHex());
+			createFile(m_compiler->filesystemFriendlyName(_contract) + ".bin-runtime", objectWithLinkRefsHex(m_compiler->runtimeObject(_contract)));
 		else
 		{
 			cout << "Binary of the runtime part: " << endl;
-			cout << m_compiler->runtimeObject(_contract).toHex() << endl;
+			cout << objectWithLinkRefsHex(m_compiler->runtimeObject(_contract)) << endl;
 		}
 	}
 }
@@ -275,7 +261,7 @@ void CommandLineInterface::handleBytecode(string const& _contract)
 {
 	if (m_args.count(g_argOpcodes))
 		handleOpcode(_contract);
-	if (m_args.count(g_argBinary) || m_args.count(g_argCloneBinary) || m_args.count(g_argBinaryRuntime))
+	if (m_args.count(g_argBinary) || m_args.count(g_argBinaryRuntime))
 		handleBinary(_contract);
 }
 
@@ -406,7 +392,18 @@ bool CommandLineInterface::readInputFilesAndConfigureRemappings()
 		{
 			auto eq = find(path.begin(), path.end(), '=');
 			if (eq != path.end())
-				path = string(eq + 1, path.end());
+			{
+				if (auto r = CompilerStack::parseRemapping(path))
+				{
+					m_remappings.emplace_back(std::move(*r));
+					path = string(eq + 1, path.end());
+				}
+				else
+				{
+					cerr << "Invalid remapping: \"" << path << "\"." << endl;
+					return false;
+				}
+			}
 			else if (path == "-")
 				addStdin = true;
 			else
@@ -416,11 +413,11 @@ bool CommandLineInterface::readInputFilesAndConfigureRemappings()
 				{
 					if (!ignoreMissing)
 					{
-						cerr << "\"" << infile << "\" is not found" << endl;
+						cerr << infile << " is not found." << endl;
 						return false;
 					}
 					else
-						cerr << "\"" << infile << "\" is not found. Skipping." << endl;
+						cerr << infile << " is not found. Skipping." << endl;
 
 					continue;
 				}
@@ -429,16 +426,16 @@ bool CommandLineInterface::readInputFilesAndConfigureRemappings()
 				{
 					if (!ignoreMissing)
 					{
-						cerr << "\"" << infile << "\" is not a valid file" << endl;
+						cerr << infile << " is not a valid file." << endl;
 						return false;
 					}
 					else
-						cerr << "\"" << infile << "\" is not a valid file. Skipping." << endl;
+						cerr << infile << " is not a valid file. Skipping." << endl;
 
 					continue;
 				}
 
-				m_sourceCodes[infile.string()] = dev::readFileAsString(infile.string());
+				m_sourceCodes[infile.generic_string()] = dev::readFileAsString(infile.string());
 				path = boost::filesystem::canonical(infile).string();
 			}
 			m_allowedDirectories.push_back(boost::filesystem::path(path).remove_filename());
@@ -485,9 +482,23 @@ bool CommandLineInterface::parseLibraryOption(string const& _input)
 			string addrString(lib.begin() + colon + 1, lib.end());
 			boost::trim(libName);
 			boost::trim(addrString);
+			if (addrString.substr(0, 2) == "0x")
+				addrString = addrString.substr(2);
+			if (addrString.empty())
+			{
+				cerr << "Empty address provided for library \"" << libName << "\": " << endl;
+				cerr << "Note that there should not be any whitespace after the colon." << endl;
+				return false;
+			}
+			else if (addrString.length() != 40)
+			{
+				cerr << "Invalid length for address for library \"" << libName << "\": " << addrString.length() << " instead of 40 characters." << endl;
+				return false;
+			}
 			if (!passesAddressChecksum(addrString, false))
 			{
-				cerr << "Invalid checksum on library address \"" << libName << "\": " << addrString << endl;
+				cerr << "Invalid checksum on address for library \"" << libName << "\": " << addrString << endl;
+				cerr << "The correct checksum is " << dev::getChecksummedAddress(addrString) << endl;
 				return false;
 			}
 			bytes binAddr = fromHex(addrString);
@@ -572,7 +583,7 @@ Allowed options)",
 			g_argLibraries.c_str(),
 			po::value<vector<string>>()->value_name("libs"),
 			"Direct string or file containing library addresses. Syntax: "
-			"<libraryName>: <address> [, or whitespace] ...\n"
+			"<libraryName>:<address> [, or whitespace] ...\n"
 			"Address is interpreted as a hex string optionally prefixed by 0x."
 		)
 		(
@@ -631,7 +642,6 @@ Allowed options)",
 		(g_argOpcodes.c_str(), "Opcodes of the contracts.")
 		(g_argBinary.c_str(), "Binary of the contracts in hex.")
 		(g_argBinaryRuntime.c_str(), "Binary of the runtime part of the contracts in hex.")
-		(g_argCloneBinary.c_str(), "Binary of the clone contracts in hex.")
 		(g_argAbi.c_str(), "ABI specification of the contracts.")
 		(g_argSignatureHashes.c_str(), "Function signature hashes of the contracts.")
 		(g_argNatspecUser.c_str(), "Natspec user documentation of all contracts.")
@@ -724,7 +734,7 @@ bool CommandLineInterface::processInput()
 				return ReadCallback::Result{false, "Not a valid file."};
 
 			auto contents = dev::readFileAsString(canonicalPath.string());
-			m_sourceCodes[path.string()] = contents;
+			m_sourceCodes[path.generic_string()] = contents;
 			return ReadCallback::Result{true, contents};
 		}
 		catch (Exception const& _exception)
@@ -740,13 +750,15 @@ bool CommandLineInterface::processInput()
 	if (m_args.count(g_argAllowPaths))
 	{
 		vector<string> paths;
-		for (string const& path: boost::split(paths, m_args[g_argAllowPaths].as<string>(), boost::is_any_of(","))) {
+		for (string const& path: boost::split(paths, m_args[g_argAllowPaths].as<string>(), boost::is_any_of(",")))
+		{
 			auto filesystem_path = boost::filesystem::path(path);
 			// If the given path had a trailing slash, the Boost filesystem
 			// path will have it's last component set to '.'. This breaks
 			// path comparison in later parts of the code, so we need to strip
 			// it.
-			if (filesystem_path.filename() == ".") {
+			if (filesystem_path.filename() == ".")
+			{
 				filesystem_path.remove_filename();
 			}
 			m_allowedDirectories.push_back(filesystem_path);
@@ -823,7 +835,7 @@ bool CommandLineInterface::processInput()
 		if (m_args.count(g_argMetadataLiteral) > 0)
 			m_compiler->useMetadataLiteralSources(true);
 		if (m_args.count(g_argInputFile))
-			m_compiler->setRemappings(m_args[g_argInputFile].as<vector<string>>());
+			m_compiler->setRemappings(m_remappings);
 		for (auto const& sourceCode: m_sourceCodes)
 			m_compiler->addSource(sourceCode.first, sourceCode.second);
 		if (m_args.count(g_argLibraries))
@@ -910,8 +922,6 @@ void CommandLineInterface::handleCombinedJSON()
 			contractData[g_strBinary] = m_compiler->object(contractName).toHex();
 		if (requests.count(g_strBinaryRuntime))
 			contractData[g_strBinaryRuntime] = m_compiler->runtimeObject(contractName).toHex();
-		if (requests.count(g_strCloneBinary))
-			contractData[g_strCloneBinary] = m_compiler->cloneObject(contractName).toHex();
 		if (requests.count(g_strOpcodes))
 			contractData[g_strOpcodes] = solidity::disassemble(m_compiler->object(contractName).bytecode);
 		if (requests.count(g_strAsm))
@@ -984,16 +994,14 @@ void CommandLineInterface::handleAst(string const& _argStr)
 		for (auto const& sourceCode: m_sourceCodes)
 			asts.push_back(&m_compiler->ast(sourceCode.first));
 		map<ASTNode const*, eth::GasMeter::GasConsumption> gasCosts;
-		// FIXME: shouldn't this be done for every contract?
-		if (m_compiler->runtimeAssemblyItems(m_compiler->lastContractName()))
+		for (auto const& contract : m_compiler->contractNames())
 		{
-			//NOTE: keep the local variable `ret` to prevent a Heisenbug that could happen on certain mac os platform.
-			//See: https://github.com/ethereum/solidity/issues/3718 for details.
 			auto ret = GasEstimator::breakToStatementLevel(
-				GasEstimator(m_evmVersion).structuralEstimation(*m_compiler->runtimeAssemblyItems(m_compiler->lastContractName()), asts),
+				GasEstimator(m_evmVersion).structuralEstimation(*m_compiler->runtimeAssemblyItems(contract), asts),
 				asts
 			);
-			gasCosts = ret;
+			for (auto const& it: ret)
+				gasCosts[it.first] += it.second;
 		}
 
 		bool legacyFormat = !m_args.count(g_argAstCompactJson);
@@ -1060,8 +1068,12 @@ bool CommandLineInterface::link()
 	{
 		string const& name = library.first;
 		// Library placeholders are 40 hex digits (20 bytes) that start and end with '__'.
-		// This leaves 36 characters for the library name, while too short library names are
-		// padded on the right with '_' and too long names are truncated.
+		// This leaves 36 characters for the library identifier. The identifier used to
+		// be just the cropped or '_'-padded library name, but this changed to
+		// the cropped hex representation of the hash of the library name.
+		// We support both ways of linking here.
+		librariesReplacements["__" + eth::LinkerObject::libraryPlaceholder(name) + "__"] = library.second;
+
 		string replacement = "__";
 		for (size_t i = 0; i < placeholderSize - 4; ++i)
 			replacement.push_back(i < name.size() ? name[i] : '_');
@@ -1091,6 +1103,11 @@ bool CommandLineInterface::link()
 				cerr << "Reference \"" << name << "\" in file \"" << src.first << "\" still unresolved." << endl;
 			it += placeholderSize;
 		}
+		// Remove hints for resolved libraries.
+		for (auto const& library: m_libraries)
+			boost::algorithm::erase_all(src.second, "\n" + libraryPlaceholderHint(library.first));
+		while (!src.second.empty() && *prev(src.second.end()) == '\n')
+			   src.second.resize(src.second.size() - 1);
 	}
 	return true;
 }
@@ -1101,7 +1118,32 @@ void CommandLineInterface::writeLinkedFiles()
 		if (src.first == g_stdinFileName)
 			cout << src.second << endl;
 		else
-			writeFile(src.first, src.second);
+		{
+			ofstream outFile(src.first);
+			outFile << src.second;
+			if (!outFile)
+			{
+				cerr << "Could not write to file " << src.first << ". Aborting." << endl;
+				return;
+			}
+		}
+}
+
+string CommandLineInterface::libraryPlaceholderHint(string const& _libraryName)
+{
+	return "// " + eth::LinkerObject::libraryPlaceholder(_libraryName) + " -> " + _libraryName;
+}
+
+string CommandLineInterface::objectWithLinkRefsHex(eth::LinkerObject const& _obj)
+{
+	string out = _obj.toHex();
+	if (!_obj.linkReferences.empty())
+	{
+		out += "\n";
+		for (auto const& linkRef: _obj.linkReferences)
+			out += "\n" + libraryPlaceholderHint(linkRef.second);
+	}
+	return out;
 }
 
 bool CommandLineInterface::assemble(

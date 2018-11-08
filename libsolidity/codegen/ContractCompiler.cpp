@@ -50,7 +50,7 @@ class StackHeightChecker
 public:
 	explicit StackHeightChecker(CompilerContext const& _context):
 		m_context(_context), stackHeight(m_context.stackHeight()) {}
-	void check() { solAssert(m_context.stackHeight() == stackHeight, std::string("I sense a disturbance in the stack: ") + std::to_string(m_context.stackHeight()) + " vs " + std::to_string(stackHeight)); }
+	void check() { solAssert(m_context.stackHeight() == stackHeight, std::string("I sense a disturbance in the stack: ") + to_string(m_context.stackHeight()) + " vs " + to_string(stackHeight)); }
 private:
 	CompilerContext const& m_context;
 	unsigned stackHeight;
@@ -71,7 +71,11 @@ void ContractCompiler::compileContract(
 		appendDelegatecallCheck();
 
 	initializeContext(_contract, _contracts);
+	// This generates the dispatch function for externally visible functions
+	// and adds the function to the compilation queue. Additionally internal functions,
+	// which are referenced directly or indirectly will be added.
 	appendFunctionSelector(_contract);
+	// This processes the above populated queue until it is empty.
 	appendMissingFunctions();
 }
 
@@ -88,27 +92,6 @@ size_t ContractCompiler::compileConstructor(
 		initializeContext(_contract, _contracts);
 		return packIntoContractCreator(_contract);
 	}
-}
-
-size_t ContractCompiler::compileClone(
-	ContractDefinition const& _contract,
-	map<ContractDefinition const*, eth::Assembly const*> const& _contracts
-)
-{
-	initializeContext(_contract, _contracts);
-
-	appendInitAndConstructorCode(_contract);
-
-	//@todo determine largest return size of all runtime functions
-	auto runtimeSub = m_context.addSubroutine(cloneRuntime());
-
-	// stack contains sub size
-	m_context << Instruction::DUP1 << runtimeSub << u256(0) << Instruction::CODECOPY;
-	m_context << u256(0) << Instruction::RETURN;
-
-	appendMissingFunctions();
-
-	return size_t(runtimeSub.data());
 }
 
 void ContractCompiler::initializeContext(
@@ -511,21 +494,21 @@ bool ContractCompiler::visit(FunctionDefinition const& _function)
 bool ContractCompiler::visit(InlineAssembly const& _inlineAssembly)
 {
 	unsigned startStackHeight = m_context.stackHeight();
-	julia::ExternalIdentifierAccess identifierAccess;
-	identifierAccess.resolve = [&](assembly::Identifier const& _identifier, julia::IdentifierContext, bool)
+	yul::ExternalIdentifierAccess identifierAccess;
+	identifierAccess.resolve = [&](assembly::Identifier const& _identifier, yul::IdentifierContext, bool)
 	{
 		auto ref = _inlineAssembly.annotation().externalReferences.find(&_identifier);
 		if (ref == _inlineAssembly.annotation().externalReferences.end())
 			return size_t(-1);
 		return ref->second.valueSize;
 	};
-	identifierAccess.generateCode = [&](assembly::Identifier const& _identifier, julia::IdentifierContext _context, julia::AbstractAssembly& _assembly)
+	identifierAccess.generateCode = [&](assembly::Identifier const& _identifier, yul::IdentifierContext _context, yul::AbstractAssembly& _assembly)
 	{
 		auto ref = _inlineAssembly.annotation().externalReferences.find(&_identifier);
 		solAssert(ref != _inlineAssembly.annotation().externalReferences.end(), "");
 		Declaration const* decl = ref->second.declaration;
 		solAssert(!!decl, "");
-		if (_context == julia::IdentifierContext::RValue)
+		if (_context == yul::IdentifierContext::RValue)
 		{
 			int const depositBefore = _assembly.stackHeight();
 			solAssert(!!decl->type(), "Type of declaration required but not yet determined.");
@@ -796,11 +779,9 @@ bool ContractCompiler::visit(Return const& _return)
 	return false;
 }
 
-bool ContractCompiler::visit(Throw const& _throw)
+bool ContractCompiler::visit(Throw const&)
 {
-	CompilerContext::LocationSetter locationSetter(m_context, _throw);
-	// Do not send back an error detail.
-	m_context.appendRevert();
+	solAssert(false, "Throw statement is disallowed.");
 	return false;
 }
 
@@ -893,9 +874,9 @@ void ContractCompiler::appendMissingFunctions()
 		solAssert(m_context.nextFunctionToCompile() != function, "Compiled the wrong function?");
 	}
 	m_context.appendMissingLowLevelFunctions();
-	string abiFunctions = m_context.abiFunctions().requestedFunctions();
-	if (!abiFunctions.empty())
-		m_context.appendInlineAssembly("{" + move(abiFunctions) + "}", {}, true);
+	auto abiFunctions = m_context.abiFunctions().requestedFunctions();
+	if (!abiFunctions.first.empty())
+		m_context.appendInlineAssembly("{" + move(abiFunctions.first) + "}", {}, abiFunctions.second, true);
 }
 
 void ContractCompiler::appendModifierOrFunctionCode()
@@ -976,29 +957,6 @@ void ContractCompiler::compileExpression(Expression const& _expression, TypePoin
 		CompilerUtils(m_context).convertType(*_expression.annotation().type, *_targetType);
 }
 
-eth::AssemblyPointer ContractCompiler::cloneRuntime() const
-{
-	eth::Assembly a;
-	a << Instruction::CALLDATASIZE;
-	a << u256(0) << Instruction::DUP1 << Instruction::CALLDATACOPY;
-	//@todo adjust for larger return values, make this dynamic.
-	a << u256(0x20) << u256(0) << Instruction::CALLDATASIZE;
-	a << u256(0);
-	// this is the address which has to be substituted by the linker.
-	//@todo implement as special "marker" AssemblyItem.
-	a << u256("0xcafecafecafecafecafecafecafecafecafecafe");
-	a << u256(eth::GasCosts::callGas(m_context.evmVersion()) + 10) << Instruction::GAS << Instruction::SUB;
-	a << Instruction::DELEGATECALL;
-	//Propagate error condition (if DELEGATECALL pushes 0 on stack).
-	a << Instruction::ISZERO;
-	a << Instruction::ISZERO;
-	eth::AssemblyItem afterTag = a.appendJumpI().tag();
-	a << Instruction::INVALID << afterTag;
-	//@todo adjust for larger return values, make this dynamic.
-	a << u256(0x20) << u256(0) << Instruction::RETURN;
-	return make_shared<eth::Assembly>(a);
-}
-
 void ContractCompiler::popScopedVariables(ASTNode const* _node)
 {
 	unsigned blockHeight = m_scopeStackHeight.at(m_modifierDepth).at(_node);
@@ -1007,7 +965,7 @@ void ContractCompiler::popScopedVariables(ASTNode const* _node)
 	unsigned stackDiff = m_context.stackHeight() - blockHeight;
 	CompilerUtils(m_context).popStackSlots(stackDiff);
 	m_scopeStackHeight[m_modifierDepth].erase(_node);
-	if (m_scopeStackHeight[m_modifierDepth].size() == 0)
+	if (m_scopeStackHeight[m_modifierDepth].empty())
 		m_scopeStackHeight.erase(m_modifierDepth);
 }
 
